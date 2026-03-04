@@ -1,0 +1,34 @@
+# GrabItDown — base dependencies (CLI + API)
+# Install with: pip install -r requirements/base.txt
+
+# Core (existing)
+pydantic>=2.0
+pydantic-settings>=2.0
+pyyaml>=6.0
+click>=8.0
+rich>=13.0
+yt-dlp>=2024.0
+
+# API
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+sqlalchemy[asyncio]>=2.0.25
+asyncpg>=0.29.0
+alembic>=1.13.0
+python-multipart>=0.0.6
+websockets>=12.0
+httpx>=0.27.0
+passlib[bcrypt]>=1.7.4
+python-jose[cryptography]>=3.3.0
+pydantic[email]>=2.0
+
+# Desktop
+pywebview>=5.0
+psutil>=5.9
+pystray>=0.19.0
+Pillow>=10.0
+requests>=2.28.0
+pyperclip>=1.8
+keyboard>=0.13
+plyer>=2.1
+packaging>=23.0

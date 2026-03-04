@@ -1,0 +1,114 @@
+# ── Python ─────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+*.manifest
+*.spec
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# ── FastAPI / API ──────────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.log
+logs/
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# ── Node / React / Next.js ─────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+.npm
+.yarn-integrity
+.next/
+out/
+.vercel
+*.tsbuildinfo
+next-env.d.ts
+
+# React / Vite (if used)
+dist/
+
+# ── Desktop & packaging ────────────────────────────────────────────────────
+# PyInstaller / desktop build output
+*.exe
+*.app
+*.dmg
+*.msi
+desktop-build/
+release/
+
+# ── Database & migrations (local/dev) ──────────────────────────────────────
+# Uncomment if you don’t want to track local DB files
+# alembic/versions/*.pyc
+
+# ── IDE & editors ──────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# ── OS ────────────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# ── Linting & type checking ─────────────────────────────────────────────────
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.ruff_cache/
+
+# ── Docker (optional) ───────────────────────────────────────────────────────
+# docker-compose.override.yml
+
+# ── Secrets & local config ──────────────────────────────────────────────────
+*.pem
+*.key
+secrets/
+.env.production
+.env.development.local
+.env.test.local

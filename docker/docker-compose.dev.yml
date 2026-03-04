@@ -1,0 +1,35 @@
+# Development services — PostgreSQL + Redis.
+
+version: "3.9"
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: gid-postgres
+    environment:
+      POSTGRES_DB: grabitdown
+      POSTGRES_USER: gid_user
+      POSTGRES_PASSWORD: gid_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gid_user -d grabitdown"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: gid-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:

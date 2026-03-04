@@ -1,0 +1,171 @@
+mode: "personal"
+personal_mode_tier: "platinum"
+tiers:
+  basic:
+    display_name: "Basic"
+    price_monthly: 0
+    features:
+      video_download:
+        enabled: true
+        max_quality: "720p"
+        max_file_size_mb: 500
+        daily_limit: 5
+      audio_download:
+        enabled: true
+        formats: ["mp3"]
+        max_bitrate: "128k"
+      playlist_download:
+        enabled: false
+        max_playlist_size: 0
+      batch_download:
+        enabled: false
+        max_urls: 0
+      concurrent_downloads:
+        enabled: true
+        max_value: 1
+      multi_connection:
+        enabled: false
+        max_connections: 1
+      transcript_youtube:
+        enabled: true
+        languages: ["en"]
+      transcript_whisper:
+        enabled: false
+        languages: []
+        model: "tiny"
+      providers:
+        youtube: true
+        facebook: false
+        mega: false
+        dropbox: false
+        generic: false
+      resume_download:
+        enabled: true
+      download_history:
+        enabled: true
+        retention_days: 7
+      bandwidth_control:
+        enabled: false
+      api_access:
+        enabled: false
+        rate_limit_per_hour: 0
+      filename_template:
+        enabled: false
+      embed_subtitles:
+        enabled: false
+      storage_retention_hours: 24
+      priority_queue:
+        enabled: false
+
+  pro:
+    display_name: "Pro"
+    price_monthly: 9
+    features:
+      video_download:
+        enabled: true
+        max_quality: "1080p"
+        max_file_size_mb: 2000
+        daily_limit: 50
+      audio_download:
+        enabled: true
+        formats: ["mp3", "m4a", "opus", "flac"]
+        max_bitrate: "320k"
+      playlist_download:
+        enabled: true
+        max_playlist_size: 50
+      batch_download:
+        enabled: true
+        max_urls: 20
+      concurrent_downloads:
+        enabled: true
+        max_value: 3
+      multi_connection:
+        enabled: false
+        max_connections: 1
+      transcript_youtube:
+        enabled: true
+        languages: ["en", "ur", "ar", "hi", "fr", "es", "de"]
+      transcript_whisper:
+        enabled: true
+        languages: ["en"]
+        model: "small"
+      providers:
+        youtube: true
+        facebook: true
+        mega: false
+        dropbox: false
+        generic: true
+      resume_download:
+        enabled: true
+      download_history:
+        enabled: true
+        retention_days: 30
+      bandwidth_control:
+        enabled: true
+      api_access:
+        enabled: true
+        rate_limit_per_hour: 60
+      filename_template:
+        enabled: true
+      embed_subtitles:
+        enabled: true
+      storage_retention_hours: 168
+      priority_queue:
+        enabled: false
+
+  platinum:
+    display_name: "Platinum"
+    price_monthly: 24
+    features:
+      video_download:
+        enabled: true
+        max_quality: "2160p"
+        max_file_size_mb: 10000
+        daily_limit: -1
+      audio_download:
+        enabled: true
+        formats: ["mp3", "m4a", "opus", "flac", "wav"]
+        max_bitrate: "320k"
+      playlist_download:
+        enabled: true
+        max_playlist_size: -1
+      batch_download:
+        enabled: true
+        max_urls: -1
+      concurrent_downloads:
+        enabled: true
+        max_value: 5
+      multi_connection:
+        enabled: true
+        max_connections: 8
+      transcript_youtube:
+        enabled: true
+        languages: ["*"]
+      transcript_whisper:
+        enabled: true
+        languages: ["*"]
+        model: "large"
+      providers:
+        youtube: true
+        facebook: true
+        mega: true
+        dropbox: true
+        generic: true
+      resume_download:
+        enabled: true
+      download_history:
+        enabled: true
+        retention_days: -1
+      bandwidth_control:
+        enabled: true
+      api_access:
+        enabled: true
+        rate_limit_per_hour: 300
+      filename_template:
+        enabled: true
+      embed_subtitles:
+        enabled: true
+      storage_retention_hours: 720
+      priority_queue:
+        enabled: true
+

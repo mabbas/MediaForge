@@ -1,0 +1,34 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #fff;
+  --foreground: #0a0a0a;
+  --primary: #2563eb;
+  --primary-foreground: #fff;
+  --muted: #f4f4f5;
+  --muted-foreground: #71717a;
+  --border: #e4e4e7;
+  --input: #e4e4e7;
+  --ring: #2563eb;
+  --destructive: #dc2626;
+  --card: #fff;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.bg-background { background-color: var(--background); }
+.bg-card { background-color: var(--card); }
+.bg-primary { background-color: var(--primary); }
+.bg-secondary { background-color: var(--muted); }
+.bg-destructive { background-color: var(--destructive); }
+.text-primary { color: var(--primary); }
+.text-muted-foreground { color: var(--muted-foreground); }
+.text-destructive { color: var(--destructive); }
+.border-input { border-color: var(--input); }
+.border-primary\/20 { border-color: rgba(37, 99, 235, 0.2); }
+.ring-ring { --tw-ring-color: var(--ring); }

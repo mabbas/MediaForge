@@ -1,0 +1,12 @@
+# GrabItDown — development and test dependencies
+# Install with: pip install -r requirements/dev.txt
+# (dev.txt includes base)
+
+-r base.txt
+
+pytest>=8.0
+pytest-asyncio>=0.23
+pytest-timeout>=2.2
+aiosqlite>=0.19.0
+ruff>=0.3.0
+mypy>=1.8

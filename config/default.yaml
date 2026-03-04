@@ -1,0 +1,81 @@
+app:
+  name: "GrabItDown"
+  version: "0.1.0"
+  environment: "development"
+  debug: false
+  log_level: "INFO"
+  log_format: "text"
+
+download:
+  # Not hardcoded: from this config (or env GID_DOWNLOAD__OUTPUT_DIRECTORY).
+  # Default expands to e.g. C:\Users\<you>\Downloads on Windows.
+  output_directory: "~/Downloads"
+  filename_template: "{provider}/{channel}/{title}.{ext}"
+  max_concurrent_downloads: 3
+  absolute_max_concurrent: 5
+  queue_max_size: 100
+  bandwidth_limit_per_download: 0
+  total_bandwidth_limit: 0
+  download_timeout_seconds: 3600
+  connection_timeout_seconds: 30
+  retry_max_attempts: 3
+  retry_backoff_base: 2
+  max_file_size_mb: 5000
+  min_disk_space_mb: 500
+
+video:
+  default_quality: "1080p"
+  preferred_format: "mp4"
+  embed_subtitles: true
+  embed_thumbnail: true
+  write_metadata: true
+
+audio:
+  default_format: "mp3"
+  default_bitrate: "192k"
+  embed_thumbnail: true
+  embed_metadata: true
+
+transcript:
+  default_languages:
+    - "en"
+    - "ur"
+  fallback_to_whisper: true
+  whisper_model: "medium"
+  whisper_device: "auto"
+  output_formats:
+    - "srt"
+    - "txt"
+  max_audio_duration_minutes: 180
+
+playlist:
+  max_playlist_size: 500
+  default_concurrency: 3
+  skip_existing: true
+  numbering: true
+  reverse_order: false
+
+resume:
+  enabled: true
+  part_file_extension: ".part"
+  progress_save_interval_seconds: 3
+  max_auto_retries: 5
+  auto_resume_on_reconnect: true
+  scan_incomplete_on_start: true
+  max_part_file_age_days: 7
+
+providers:
+  youtube:
+    enabled: true
+    cookies_file: null
+    geo_bypass: true
+  facebook:
+    enabled: false
+    cookies_file: null
+  mega:
+    enabled: false
+  dropbox:
+    enabled: false
+  generic:
+    enabled: true
+
