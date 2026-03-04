@@ -1,6 +1,7 @@
-## GrabItDown
 
-GrabItDown is a production-grade media downloader platform with multi-site video/audio support, transcripts, resume capability, and a plugin-friendly architecture.
+## MediaForge
+
+MediaForge is a production-grade media downloader platform with multi-site video/audio support, transcripts, resume capability, and a plugin-friendly architecture.
 
 ### Setup
 
@@ -31,4 +32,8 @@ make test
 ```bash
 make verify
 ```
+
+
+# MediaForge
+MediaForge - Python/ Fast API based Media downloader
 
