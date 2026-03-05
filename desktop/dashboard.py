@@ -112,6 +112,24 @@ def get_dashboard_html(api_base: str) -> str:
             color: #e0e0e0;
             font-size: 13px;
         }}
+        .input-style {{
+            padding: 12px 16px;
+            border: 1px solid #2a2a3e;
+            border-radius: 8px;
+            background: #1a1a2e;
+            color: #e0e0e0;
+            font-size: 14px;
+            outline: none;
+        }}
+        .input-style:focus {{ border-color: #00d4ff; }}
+        .select-style {{
+            padding: 8px 12px;
+            border: 1px solid #2a2a3e;
+            border-radius: 6px;
+            background: #1a1a2e;
+            color: #e0e0e0;
+            font-size: 13px;
+        }}
         .stats-grid {{
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -224,9 +242,54 @@ def get_dashboard_html(api_base: str) -> str:
         .toast-success {{ background: #1a3a2a; border: 1px solid #4ade80; color: #4ade80; }}
         .toast-error {{ background: #3a1a1a; border: 1px solid #f87171; color: #f87171; }}
         .toast-info {{ background: #1a2a3e; border: 1px solid #60a5fa; color: #60a5fa; }}
+        .clip-job-card {{
+            display: none;
+            margin-bottom: 12px;
+        }}
+        .clip-job-card.visible {{
+            display: flex;
+        }}
+        .clip-job-card .job-progress {{ width: 100%; max-width: 240px; }}
+        .clip-job-card.visible .clip-progress-fill {{
+            width: 45% !important;
+            animation: clipIndeterminate 1.5s ease-in-out infinite;
+        }}
+        @keyframes clipIndeterminate {{
+            0% {{ margin-left: 0; }}
+            50% {{ margin-left: 55%; }}
+            100% {{ margin-left: 0; }}
+        }}
         @keyframes slideIn {{
             from {{ transform: translateX(100%); opacity: 0; }}
             to {{ transform: translateX(0); opacity: 1; }}
+        }}
+        .tab-bar {{
+            display: flex;
+            gap: 4px;
+            margin-bottom: 20px;
+            border-bottom: 1px solid #2a2a3e;
+        }}
+        .tab-btn {{
+            padding: 12px 20px;
+            background: transparent;
+            border: none;
+            border-bottom: 3px solid transparent;
+            color: #888;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-bottom: -1px;
+        }}
+        .tab-btn:hover {{ color: #e0e0e0; }}
+        .tab-btn.active {{
+            color: #00d4ff;
+            border-bottom-color: #00d4ff;
+        }}
+        .tab-panel {{
+            display: none;
+        }}
+        .tab-panel.active {{
+            display: block;
         }}
     </style>
 </head>
@@ -242,6 +305,16 @@ def get_dashboard_html(api_base: str) -> str:
     </div>
 
     <div class="container">
+        <div class="tab-bar">
+            <button type="button" class="tab-btn active" id="tab-btn-download"
+                onclick="switchTab('download')">📥 Download</button>
+            <button type="button" class="tab-btn" id="tab-btn-extract"
+                onclick="switchTab('extract')">✂️ Extract Clip</button>
+            <button type="button" class="tab-btn" id="tab-btn-merge"
+                onclick="switchTab('merge')">🔗 Merge Clips</button>
+        </div>
+
+        <div id="panel-download" class="tab-panel active">
         <div class="input-group">
             <input type="text" id="url-input"
                    placeholder="Paste video URL here... (YouTube, Vimeo, etc.)"
@@ -304,12 +377,120 @@ def get_dashboard_html(api_base: str) -> str:
 
         <div class="section">
             <div class="section-title">Downloads</div>
+            <div id="clip-job-card" class="clip-job-card job-card">
+                <div class="job-info">
+                    <div class="job-title">✂️ Extracting clip…</div>
+                    <div class="job-meta" id="clip-job-meta">—</div>
+                </div>
+                <div class="job-progress">
+                    <div class="progress-bar"><div class="progress-fill clip-progress-fill" style="width:0%"></div></div>
+                    <div class="progress-text" id="clip-progress-text">0:00</div>
+                </div>
+                <span class="job-status status-downloading">extracting</span>
+            </div>
             <div class="job-list" id="job-list">
                 <div class="empty-state">
                     <div class="icon">📥</div>
                     <div>No downloads yet. Paste a URL above to start.</div>
                 </div>
             </div>
+        </div>
+        </div>
+
+        <div id="panel-extract" class="tab-panel">
+        <div class="section">
+            <div class="section-title">✂️ Clip Extraction</div>
+            <div id="clip-extract-progress-card" class="clip-job-card job-card">
+                <div class="job-info">
+                    <div class="job-title">✂️ Extracting clip…</div>
+                    <div class="job-meta" id="clip-extract-job-meta">—</div>
+                </div>
+                <div class="job-progress">
+                    <div class="progress-bar"><div class="progress-fill clip-progress-fill" style="width:0%"></div></div>
+                    <div class="progress-text" id="clip-extract-progress-text">0:00</div>
+                </div>
+                <span class="job-status status-downloading">extracting</span>
+            </div>
+            <p style="font-size:12px;color:#888;margin-bottom:8px;">
+                From a local video or paste a URL to download and clip.
+            </p>
+            <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center;">
+                <input type="text" id="clip-source"
+                    placeholder="Video file path or URL"
+                    style="flex:2;" class="input-style">
+                <button type="button" class="btn btn-outline btn-sm"
+                    onclick="browseClipSource()" title="Select video on your computer">
+                    📁 Browse
+                </button>
+            </div>
+            <div style="display:flex;gap:8px;margin-bottom:8px;
+                align-items:center;">
+                <input type="text" id="clip-start"
+                    value="00:10:00" placeholder="Start (00:01:30)"
+                    style="width:140px;" class="input-style">
+                <span style="color:#888;">→</span>
+                <input type="text" id="clip-end"
+                    value="00:30:00" placeholder="End (00:03:45)"
+                    style="width:140px;" class="input-style">
+                <select id="clip-mode" class="select-style">
+                    <option value="precise">Precise</option>
+                    <option value="fast">Fast (keyframe)</option>
+                </select>
+                <select id="clip-format" class="select-style">
+                    <option value="mp4">MP4</option>
+                    <option value="mkv">MKV</option>
+                    <option value="webm">WebM</option>
+                </select>
+                <button class="btn btn-primary" id="btn-extract-clip"
+                    onclick="extractClip()">
+                    ✂️ Extract Clip
+                </button>
+            </div>
+            <div id="clip-result"></div>
+        </div>
+        </div>
+
+        <div id="panel-merge" class="tab-panel">
+        <div class="section">
+            <div class="section-title">🔗 Merge Clips</div>
+            <p style="font-size:12px;color:#888;margin-bottom:8px;">
+                Add 2–10 clips as <strong>local file paths</strong> (not URLs). Download videos in the Download tab first, then use Browse or paste paths (e.g. path/to/video.mp4).
+            </p>
+            <div id="merge-clips-list" style="margin-bottom:8px;">
+                <div class="merge-clip-row" style="display:flex;gap:8px;margin-bottom:4px;align-items:center;">
+                    <input type="text" class="merge-clip-input input-style"
+                        placeholder="Clip 1 file path" style="flex:1;">
+                    <button type="button" class="btn btn-outline btn-sm" onclick="browseMergeClip(this)" title="Select video">📁 Browse</button>
+                </div>
+                <div class="merge-clip-row" style="display:flex;gap:8px;margin-bottom:4px;align-items:center;">
+                    <input type="text" class="merge-clip-input input-style"
+                        placeholder="Clip 2 file path" style="flex:1;">
+                    <button type="button" class="btn btn-outline btn-sm" onclick="browseMergeClip(this)" title="Select video">📁 Browse</button>
+                </div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;
+                margin-bottom:8px;">
+                <button class="btn btn-outline btn-sm"
+                    onclick="addMergeClipInput()">
+                    + Add Clip
+                </button>
+                <select id="merge-mode" class="select-style">
+                    <option value="auto">Auto Detect</option>
+                    <option value="concat">Fast (same codec)</option>
+                    <option value="reencode">Re-encode (any mix)</option>
+                </select>
+                <select id="merge-format" class="select-style">
+                    <option value="mp4">MP4</option>
+                    <option value="mkv">MKV</option>
+                </select>
+                <div style="flex:1;"></div>
+                <button class="btn btn-primary"
+                    onclick="mergeClips()">
+                    🔗 Merge Clips
+                </button>
+            </div>
+            <div id="merge-result"></div>
+        </div>
         </div>
     </div>
 
@@ -320,6 +501,15 @@ def get_dashboard_html(api_base: str) -> str:
     const WS_URL = '{ws_base}/api/v1/ws/progress';
     let ws = null;
     let jobs = {{}};
+
+    function switchTab(tabId) {{
+        ['download', 'extract', 'merge'].forEach(function(id) {{
+            var panel = document.getElementById('panel-' + id);
+            var btn = document.getElementById('tab-btn-' + id);
+            if (panel) panel.classList.toggle('active', id === tabId);
+            if (btn) btn.classList.toggle('active', id === tabId);
+        }});
+    }}
 
     async function api(method, path, body) {{
         const opts = {{
@@ -410,6 +600,240 @@ def get_dashboard_html(api_base: str) -> str:
         await api('POST', '/queue/resume');
         toast('Queue resumed', 'success');
         updatePauseResumeButtons(false);
+    }}
+
+    window.addEventListener('pywebviewready', function() {{ window._pywebviewReady = true; }});
+
+    async function browseClipSource() {{
+        function getApi() {{
+            try {{
+                if (typeof pywebview !== 'undefined' && pywebview.api) {{
+                    if (typeof pywebview.api.select_video_file === 'function')
+                        return pywebview.api.select_video_file;
+                    if (typeof pywebview.api.selectVideoFile === 'function')
+                        return pywebview.api.selectVideoFile;
+                }}
+            }} catch(e) {{}}
+            return null;
+        }}
+        let fn = getApi();
+        if (!fn && typeof pywebview !== 'undefined') {{
+            await new Promise(function(resolve) {{
+                if (window._pywebviewReady) return resolve();
+                window.addEventListener('pywebviewready', resolve, {{ once: true }});
+                setTimeout(resolve, 800);
+            }});
+            fn = getApi();
+        }}
+        if (fn) {{
+            try {{
+                const path = await (typeof fn === 'function' ? fn() : fn);
+                if (path) {{
+                    document.getElementById('clip-source').value = path;
+                    toast('Video selected', 'success');
+                }}
+            }} catch(e) {{
+                toast('Could not open file dialog: ' + (e.message || 'unknown'), 'error');
+            }}
+        }} else {{
+            toast('Paste the full path to your video, or use the desktop app to browse.', 'info');
+        }}
+    }}
+
+    let clipTimerId = null;
+    let clipStartTime = 0;
+    function setClipProgress(visible, label) {{
+        const card = document.getElementById('clip-job-card');
+        const cardExtract = document.getElementById('clip-extract-progress-card');
+        const meta = document.getElementById('clip-job-meta');
+        const metaExtract = document.getElementById('clip-extract-job-meta');
+        const textEl = document.getElementById('clip-progress-text');
+        const textElExtract = document.getElementById('clip-extract-progress-text');
+        const btn = document.getElementById('btn-extract-clip');
+        if (card) card.classList.toggle('visible', !!visible);
+        if (cardExtract) cardExtract.classList.toggle('visible', !!visible);
+        if (btn) btn.disabled = !!visible;
+        if (visible) {{
+            if (meta) meta.textContent = label || 'Preparing…';
+            if (metaExtract) metaExtract.textContent = label || 'Preparing…';
+            clipStartTime = Date.now();
+            function tick() {{
+                const sec = Math.floor((Date.now() - clipStartTime) / 1000);
+                const m = Math.floor(sec / 60);
+                const s = sec % 60;
+                const t = m + ':' + (s < 10 ? '0' : '') + s;
+                if (textEl) textEl.textContent = t;
+                if (textElExtract) textElExtract.textContent = t;
+            }}
+            tick();
+            clipTimerId = setInterval(tick, 1000);
+        }} else {{
+            if (clipTimerId) {{ clearInterval(clipTimerId); clipTimerId = null; }}
+            if (textEl) textEl.textContent = '0:00';
+            if (textElExtract) textElExtract.textContent = '0:00';
+        }}
+    }}
+
+    async function extractClip() {{
+        const source = document.getElementById('clip-source').value.trim();
+        const start = document.getElementById('clip-start').value.trim();
+        const end = document.getElementById('clip-end').value.trim();
+        const mode = document.getElementById('clip-mode').value;
+        const format = document.getElementById('clip-format').value;
+
+        if (!source || !start || !end) {{
+            toast('Please fill all clip fields (source, start time, end time)', 'error');
+            return;
+        }}
+
+        const label = source.length > 50 ? source.slice(0, 47) + '…' : source;
+        setClipProgress(true, label);
+        toast('Extracting clip...', 'info');
+        document.getElementById('clip-result').innerHTML = '';
+
+        try {{
+            const data = await api('POST', '/clips/extract', {{
+                source,
+                start_time: start,
+                end_time: end,
+                mode,
+                output_format: format
+            }});
+            if (data.success) {{
+                toast('Clip extracted: ' + data.file_size_human + ', ' +
+                    data.duration_seconds.toFixed(1) + 's', 'success');
+                document.getElementById('clip-result').innerHTML =
+                    '<div style="margin-top:8px;padding:12px;' +
+                    'background:#1a3a2a;border-radius:8px;' +
+                    'border:1px solid #4ade80;">' +
+                    '<div>✅ Clip saved: ' + data.output_path + '</div>' +
+                    '<div>Duration: ' + data.duration_seconds.toFixed(1) + 's' +
+                    ' | Size: ' + data.file_size_human + '</div></div>';
+            }} else {{
+                toast(data.error || data.detail || 'Extraction failed', 'error');
+            }}
+        }} catch(e) {{
+            toast('Error: ' + e.message, 'error');
+        }} finally {{
+            setClipProgress(false);
+        }}
+    }}
+
+    async function browseMergeClip(btn) {{
+        var row = btn.closest('.merge-clip-row');
+        var input = row ? row.querySelector('.merge-clip-input') : null;
+        if (!input) return;
+        function getApi() {{
+            try {{
+                if (typeof pywebview !== 'undefined' && pywebview.api) {{
+                    if (typeof pywebview.api.select_video_file === 'function')
+                        return pywebview.api.select_video_file;
+                    if (typeof pywebview.api.selectVideoFile === 'function')
+                        return pywebview.api.selectVideoFile;
+                }}
+            }} catch(e) {{}}
+            return null;
+        }}
+        var fn = getApi();
+        if (!fn && typeof pywebview !== 'undefined') {{
+            await new Promise(function(resolve) {{
+                if (window._pywebviewReady) return resolve();
+                window.addEventListener('pywebviewready', resolve, {{ once: true }});
+                setTimeout(resolve, 800);
+            }});
+            fn = getApi();
+        }}
+        if (fn) {{
+            try {{
+                var path = await (typeof fn === 'function' ? fn() : fn);
+                if (path) {{ input.value = path; toast('Clip selected', 'success'); }}
+            }} catch(e) {{
+                toast('Could not open file dialog: ' + (e.message || 'unknown'), 'error');
+            }}
+        }} else {{
+            toast('Paste the full path, or use the desktop app to browse.', 'info');
+        }}
+    }}
+
+    function addMergeClipInput() {{
+        const list = document.getElementById('merge-clips-list');
+        const count = list.querySelectorAll('.merge-clip-input').length;
+        if (count >= 10) {{
+            toast('Maximum 10 clips', 'error');
+            return;
+        }}
+        const div = document.createElement('div');
+        div.className = 'merge-clip-row';
+        div.style.cssText = 'display:flex;gap:8px;margin-bottom:4px;align-items:center;';
+        div.innerHTML = '<input type="text" class="merge-clip-input input-style" ' +
+            'placeholder="Clip ' + (count + 1) + ' file path" style="flex:1;">' +
+            '<button type="button" class="btn btn-outline btn-sm" onclick="browseMergeClip(this)" title="Select video">📁 Browse</button>' +
+            '<button class="btn btn-outline btn-sm" onclick="this.parentElement.remove()" style="padding:6px 10px;">✕</button>';
+        list.appendChild(div);
+    }}
+
+    async function mergeClips() {{
+        const inputs = document.querySelectorAll('.merge-clip-input');
+        const clips = Array.from(inputs)
+            .map(i => i.value.trim())
+            .filter(v => v.length > 0);
+
+        if (clips.length < 2) {{
+            toast('At least 2 clips required', 'error');
+            document.getElementById('merge-result').innerHTML =
+                '<div style="margin-top:8px;padding:12px;background:#3a1a1a;border-radius:8px;border:1px solid #f87171;color:#f87171;">' +
+                'At least 2 clips required. Add file paths or use Browse to select videos.</div>';
+            return;
+        }}
+
+        var isUrl = clips.some(function(c) {{ return c.indexOf('http://') === 0 || c.indexOf('https://') === 0; }});
+        if (isUrl) {{
+            toast('Use local file paths, not URLs', 'error');
+            document.getElementById('merge-result').innerHTML =
+                '<div style="margin-top:8px;padding:12px;background:#3a1a1a;border-radius:8px;border:1px solid #f87171;color:#f87171;">' +
+                '<strong>Merge needs local files, not URLs.</strong><br>Download the videos in the Download tab first, then use the Browse button here to select the saved files.</div>';
+            return;
+        }}
+
+        const mode = document.getElementById('merge-mode').value;
+        const format = document.getElementById('merge-format').value;
+        document.getElementById('merge-result').innerHTML = '';
+
+        toast('Merging ' + clips.length + ' clips...', 'info');
+
+        try {{
+            const r = await fetch(API + '/clips/merge', {{
+                method: 'POST',
+                headers: {{ 'Content-Type': 'application/json' }},
+                body: JSON.stringify({{ clips, mode, output_format: format }}),
+            }});
+            const data = await r.json();
+            if (r.ok && data.success) {{
+                toast('Merged ' + data.clip_count + ' clips: ' +
+                    data.file_size_human + ', ' +
+                    data.total_duration_seconds.toFixed(1) + 's', 'success');
+                document.getElementById('merge-result').innerHTML =
+                    '<div style="margin-top:8px;padding:12px;' +
+                    'background:#1a3a2a;border-radius:8px;' +
+                    'border:1px solid #4ade80;">' +
+                    '<div>✅ Merged: ' + data.output_path + '</div>' +
+                    '<div>' + data.clip_count + ' clips | ' +
+                    'Duration: ' + data.total_duration_seconds.toFixed(1) + 's | ' +
+                    'Size: ' + data.file_size_human + '</div></div>';
+            }} else {{
+                var msg = data.detail || data.error || 'Merge failed';
+                if (Array.isArray(data.detail)) msg = (data.detail[0] && data.detail[0].msg) || msg;
+                toast(msg, 'error');
+                document.getElementById('merge-result').innerHTML =
+                    '<div style="margin-top:8px;padding:12px;background:#3a1a1a;border-radius:8px;border:1px solid #f87171;color:#f87171;">' +
+                    '<strong>Could not merge</strong><br>' + (typeof msg === 'string' ? msg : JSON.stringify(msg)) + '</div>';
+            }}
+        }} catch(e) {{
+            toast('Error: ' + e.message, 'error');
+            document.getElementById('merge-result').innerHTML =
+                '<div style="margin-top:8px;padding:12px;background:#3a1a1a;border-radius:8px;border:1px solid #f87171;color:#f87171;">' +
+                'Network error: ' + e.message + '</div>';
+        }}
     }}
 
     function updatePauseResumeButtons(isPaused) {{

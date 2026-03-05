@@ -64,6 +64,18 @@ class JSBridge:
             return self._app.dialogs.select_file(title="Select URL File", file_types=[("Text Files", "*.txt"), ("All Files", "*.*")])
         return None
 
+    def select_video_file(self):
+        """Open file picker for clip source (local video). Returns path or None."""
+        if self._app and getattr(self._app, "dialogs", None):
+            return self._app.dialogs.select_file(
+                title="Select Video to Clip",
+                file_types=[
+                    ("Video", "*.mp4;*.mkv;*.webm;*.avi;*.mov;*.m4v;*.flv"),
+                    ("All Files", "*.*"),
+                ],
+            )
+        return None
+
     def get_system_info(self):
         try:
             import psutil

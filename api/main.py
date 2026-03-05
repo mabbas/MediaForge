@@ -31,6 +31,8 @@ from api.middleware.error_handler import (
 from api.middleware.rate_limiter import RateLimiterMiddleware
 from api.middleware.request_logger import RequestLoggerMiddleware
 from api.routers import (
+    clips,
+    clips_merge,
     config,
     downloads,
     features,
@@ -138,6 +140,7 @@ app = FastAPI(
         {"name": "Config", "description": "Configuration"},
         {"name": "WebSocket", "description": "Real-time progress"},
         {"name": "Auth", "description": "Authentication (future)"},
+        {"name": "clips", "description": "Clip extraction from video"},
     ],
 )
 
@@ -168,6 +171,8 @@ app.include_router(queue.router, prefix=settings.api_prefix)
 app.include_router(providers.router, prefix=settings.api_prefix)
 app.include_router(resolve.router, prefix=settings.api_prefix)
 app.include_router(transcripts.router, prefix=settings.api_prefix)
+app.include_router(clips_merge.router, prefix=settings.api_prefix)
+app.include_router(clips.router, prefix=settings.api_prefix)
 app.include_router(ws.router, prefix=settings.api_prefix)
 
 
