@@ -13,6 +13,7 @@ from src.exceptions import DownloadError, ProviderError
 from src.models.download import DownloadRequest, DownloadResult
 from src.models.enums import DownloadStatus, MediaType, ProviderType
 from src.models.playlist import PlaylistDownloadRequest, PlaylistInfo, PlaylistItem
+from src.log_safe import safe_str
 from src.providers.youtube.provider import YouTubeProvider
 
 logger = logging.getLogger(__name__)
@@ -65,7 +66,7 @@ class YouTubePlaylistHandler:
                 result = self._map_playlist_info(info)
                 logger.info(
                     "Playlist '%s': %s items (available: %s)",
-                    result.title,
+                    safe_str(result.title),
                     result.item_count,
                     len(result.available_items),
                 )
@@ -94,7 +95,7 @@ class YouTubePlaylistHandler:
         total = len(items)
 
         for i, item in enumerate(items, 1):
-            logger.info("Downloading %s/%s: %s", i, total, item.title)
+            logger.info("Downloading %s/%s: %s", i, total, safe_str(item.title))
 
             dl_request = DownloadRequest(
                 url=item.url,
@@ -116,7 +117,7 @@ class YouTubePlaylistHandler:
                 )
                 results.append(result)
             except DownloadError as exc:
-                logger.error("Failed to download '%s': %s", item.title, exc)
+                logger.error("Failed to download '%s': %s", safe_str(item.title), exc)
                 results.append(
                     DownloadResult(
                         job_id=f"playlist-{item.index}",

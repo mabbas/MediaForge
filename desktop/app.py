@@ -272,6 +272,31 @@ class GrabItDownDesktop:
                     time.sleep(1)
             except KeyboardInterrupt:
                 pass
+        except Exception as e:
+            err_msg = str(e).lower()
+            if (
+                "pythonnet" in err_msg
+                or "no module named 'clr'" in err_msg
+                or ("webview" in err_msg and ("must have" in err_msg or "cannot be loaded" in err_msg))
+            ):
+                logger.warning(
+                    "Native window unavailable (%s). Opening in browser.",
+                    e,
+                )
+                import webbrowser
+                webbrowser.open(self.server.base_url.rstrip("/") + "/dashboard")
+                print()
+                print("GrabItDown is running in your browser (native window requires pythonnet).")
+                print("Dashboard: " + (self.server.base_url.rstrip("/") + "/dashboard"))
+                print("Press Ctrl+C to stop.")
+                print()
+                try:
+                    while True:
+                        time.sleep(1)
+                except KeyboardInterrupt:
+                    pass
+            else:
+                raise
         except (OSError, RuntimeError) as e:
             logger.warning(
                 "Native window unavailable (%s). Opening in browser instead.",
@@ -455,8 +480,10 @@ class GrabItDownDesktop:
             return
 
         def _updater() -> None:
-            import requests
-
+            try:
+                import requests
+            except ImportError:
+                return
             while self.server and self.server.is_running:
                 try:
                     r = requests.get(

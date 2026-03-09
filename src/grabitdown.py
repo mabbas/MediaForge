@@ -107,8 +107,9 @@ class GrabItDown:
         user_id: str = "system",
         tier: Optional[str] = None,
         priority: str = "normal",
+        start: bool = True,
     ) -> DownloadJob:
-        """Submit a single download via the facade."""
+        """Submit a single download via the facade. If start=False, job is deferred until start_download_job/start_all_deferred."""
         # Feature check
         feature_name = "video_download" if mode == "video" else "audio_download"
         access = self._gate.check_access(feature_name, tier=tier)
@@ -137,6 +138,7 @@ class GrabItDown:
             request=request,
             priority=priority,
             user_id=user_id,
+            start=start,
         )
 
     def download_playlist(
@@ -150,6 +152,7 @@ class GrabItDown:
         user_id: str = "system",
         tier: Optional[str] = None,
         priority: str = "normal",
+        start: bool = True,
     ) -> List[DownloadJob]:
         """Submit a playlist for download."""
         # Feature check
@@ -173,6 +176,7 @@ class GrabItDown:
             request=playlist_request,
             priority=priority,
             user_id=user_id,
+            start=start,
         )
         return jobs
 
@@ -185,8 +189,9 @@ class GrabItDown:
         user_id: str = "system",
         tier: Optional[str] = None,
         priority: str = "normal",
+        start: bool = True,
     ) -> List[DownloadJob]:
-        """Submit a batch of downloads."""
+        """Submit a batch of downloads. If start=False, jobs are deferred."""
         # Feature check
         access = self._gate.check_access("batch_download", tier=tier)
         if not access.allowed:
@@ -209,6 +214,7 @@ class GrabItDown:
             requests=requests,
             priority=priority,
             user_id=user_id,
+            start=start,
         )
 
     # ── Status & Control ────────────────────────────────────────────────────
@@ -240,6 +246,22 @@ class GrabItDown:
     def resume(self) -> None:
         """Resume download engine."""
         self._engine.resume_all()
+
+    def start_download_job(self, job_id: str) -> bool:
+        """Start a deferred download job. Returns True if the job was deferred and is now queued."""
+        return self._engine.start_job(job_id)
+
+    def start_all_deferred(self) -> int:
+        """Start all deferred download jobs. Returns the number of jobs started."""
+        return self._engine.start_all_deferred()
+
+    def pause_download_job(self, job_id: str) -> bool:
+        """Pause a single download (queued, deferred, or active). Job can be resumed later."""
+        return self._engine.pause_job(job_id)
+
+    def requeue_job(self, job_id: str) -> bool:
+        """Re-queue a failed/paused/interrupted job (same job_id). Returns True if requeued."""
+        return self._engine.requeue_job(job_id)
 
     # ── Info APIs ───────────────────────────────────────────────────────────
 

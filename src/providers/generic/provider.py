@@ -11,7 +11,7 @@ import yt_dlp
 
 from src.core.base_provider import BaseMediaProvider
 from src.core.interfaces import ProgressCallback, ProviderCapabilities
-from src.exceptions import DownloadError, ProviderError
+from src.exceptions import DownloadCancelledError, DownloadError, ProviderError
 from src.models.download import DownloadRequest, DownloadResult, DownloadProgress
 from src.models.enums import DownloadStatus, MediaType, ProviderType, Quality
 from src.models.media import MediaFormat, MediaInfo, Thumbnail
@@ -221,6 +221,8 @@ class GenericProvider(BaseMediaProvider):
         )
         try:
             callback(progress)
+        except DownloadCancelledError:
+            raise  # Let cancellation propagate so yt-dlp aborts the download
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("Progress callback error: %s", exc)
 

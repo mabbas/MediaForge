@@ -20,6 +20,7 @@ from src.models.enums import DownloadStatus, MediaType, ProviderType
 from src.models.playlist import PlaylistDownloadRequest
 from src.download.progress_tracker import ProgressTracker
 from src.download.queue_manager import DownloadQueue
+from src.log_safe import safe_str
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,8 @@ class DownloadEngine:
         self._is_paused = False
         self._cancelled_job_ids: set = set()
         self._cancelled_lock = threading.Lock()
+        self._paused_job_ids: set = set()  # job_ids that were paused (so we set PAUSED not CANCELLED)
+        self._deferred: Dict[str, DownloadJob] = {}
 
         self._queue_thread = threading.Thread(
             target=self._queue_consumer,
@@ -94,12 +97,14 @@ class DownloadEngine:
         priority: str = "normal",
         user_id: str = "system",
         tenant_id: str = "default",
+        start: bool = True,
     ) -> DownloadJob:
-        """Submit a single download request."""
+        """Submit a single download request. If start=False, job is deferred until start_job/start_all_deferred."""
         provider = self._registry.detect_provider(request.url)
 
         job_id = str(uuid4())
-        progress = DownloadProgress(job_id=job_id, status=DownloadStatus.QUEUED)
+        status = DownloadStatus.DEFERRED if not start else DownloadStatus.QUEUED
+        progress = DownloadProgress(job_id=job_id, status=status)
         job = DownloadJob(
             job_id=job_id,
             request=request,
@@ -112,14 +117,19 @@ class DownloadEngine:
         with self._jobs_lock:
             self._jobs[job_id] = job
 
-        self._queue.put(job)
+        if start:
+            self._queue.put(job)
+        else:
+            self._deferred[job_id] = job
+
         self._progress_tracker.update(job_id, progress)
 
         logger.info(
-            "Download submitted: %s -> %s (priority=%s)",
+            "Download submitted: %s -> %s (priority=%s, start=%s)",
             job_id[:8],
             provider.name,
             priority,
+            start,
         )
         return job
 
@@ -129,6 +139,7 @@ class DownloadEngine:
         priority: str = "normal",
         user_id: str = "system",
         tenant_id: str = "default",
+        start: bool = True,
     ) -> List[DownloadJob]:
         """Submit multiple download requests."""
         jobs: List[DownloadJob] = []
@@ -139,6 +150,7 @@ class DownloadEngine:
                     priority=priority,
                     user_id=user_id,
                     tenant_id=tenant_id,
+                    start=start,
                 )
                 jobs.append(job)
             except (ProviderError, LimitExceededError) as exc:
@@ -173,6 +185,7 @@ class DownloadEngine:
         priority: str = "normal",
         user_id: str = "system",
         tenant_id: str = "default",
+        start: bool = True,
     ) -> tuple[str, List[DownloadJob]]:
         """Submit a playlist for download."""
         provider = self._registry.detect_provider(request.url)
@@ -216,6 +229,7 @@ class DownloadEngine:
                 priority=priority,
                 user_id=user_id,
                 tenant_id=tenant_id,
+                start=start,
             )
             job.parent_job_id = parent_job_id
             job.playlist_index = item.index
@@ -226,15 +240,25 @@ class DownloadEngine:
             "Playlist submitted: %s -> %s videos from '%s' -> %s",
             parent_job_id[:8],
             len(child_jobs),
-            playlist_info.title,
-            playlist_output_dir,
+            safe_str(playlist_info.title),
+            safe_str(playlist_output_dir),
         )
         return parent_job_id, child_jobs
 
     # ── Job control ──────────────────────────────────────────────────────────
 
     def cancel_job(self, job_id: str) -> bool:
-        """Cancel a queued or active download."""
+        """Cancel a queued, deferred, or active download."""
+        was_deferred = False
+        with self._jobs_lock:
+            if job_id in self._deferred:
+                self._deferred.pop(job_id, None)
+                was_deferred = True
+        if was_deferred:
+            self._update_job_status(job_id, DownloadStatus.CANCELLED)
+            logger.info("Job %s cancelled (was deferred)", job_id[:8])
+            return True
+
         if self._queue.remove(job_id):
             self._update_job_status(job_id, DownloadStatus.CANCELLED)
             logger.info("Job %s cancelled (was queued)", job_id[:8])
@@ -251,9 +275,84 @@ class DownloadEngine:
 
         return False
 
+    def start_job(self, job_id: str) -> bool:
+        """Move a deferred job to the queue so it will be started. Returns True if job was deferred and is now queued."""
+        with self._jobs_lock:
+            job = self._deferred.pop(job_id, None)
+            if not job:
+                return False
+            job.progress.status = DownloadStatus.QUEUED
+            self._progress_tracker.update(job_id, job.progress)
+        self._queue.put(job)
+        logger.info("Deferred job %s started (moved to queue)", job_id[:8])
+        return True
+
+    def pause_job(self, job_id: str) -> bool:
+        """Pause a queued, deferred, or active download (sets status to PAUSED so it can be resumed). Returns True if the job was paused."""
+        with self._jobs_lock:
+            if job_id in self._deferred:
+                self._deferred.pop(job_id, None)
+                self._update_job_status(job_id, DownloadStatus.PAUSED)
+                logger.info("Job %s paused (was deferred)", job_id[:8])
+                return True
+        if self._queue.remove(job_id):
+            self._update_job_status(job_id, DownloadStatus.PAUSED)
+            logger.info("Job %s paused (was queued)", job_id[:8])
+            return True
+        with self._jobs_lock:
+            future = self._futures.get(job_id)
+            if future and not future.done():
+                with self._cancelled_lock:
+                    self._cancelled_job_ids.add(job_id)
+                self._paused_job_ids.add(job_id)
+                future.cancel()
+                logger.info("Job %s pause requested (active)", job_id[:8])
+                return True
+        return False
+
+    def requeue_job(self, job_id: str) -> bool:
+        """Re-queue a failed/paused/interrupted job so it runs again (same job_id). Returns True if the job was requeued."""
+        with self._jobs_lock:
+            job = self._jobs.get(job_id)
+            if not job or not job.progress:
+                return False
+            status = job.progress.status
+            status_val = status.value if hasattr(status, "value") else str(status)
+            if status_val not in ("failed", "paused", "interrupted"):
+                return False
+            job.progress.status = DownloadStatus.QUEUED
+            job.progress.percent = 0.0
+            job.progress.bytes_downloaded = 0
+            job.progress.total_bytes = None
+            job.result = None
+            self._progress_tracker.update(job_id, job.progress)
+        self._queue.put(job)
+        logger.info("Job %s requeued (was %s)", job_id[:8], status_val)
+        return True
+
+    def start_all_deferred(self) -> int:
+        """Move all deferred jobs to the queue. Returns the number of jobs started."""
+        with self._jobs_lock:
+            to_start = list(self._deferred.values())
+            self._deferred.clear()
+        for job in to_start:
+            job.progress.status = DownloadStatus.QUEUED
+            self._progress_tracker.update(job.job_id, job.progress)
+            self._queue.put(job)
+        if to_start:
+            logger.info("Started %s deferred jobs", len(to_start))
+        return len(to_start)
+
     def cancel_all(self) -> int:
-        """Cancel all queued and active downloads."""
+        """Cancel all queued, deferred, and active downloads."""
         count = 0
+
+        with self._jobs_lock:
+            deferred_ids = list(self._deferred.keys())
+            self._deferred.clear()
+        for jid in deferred_ids:
+            self._update_job_status(jid, DownloadStatus.CANCELLED)
+            count += 1
 
         for job in self._queue.get_all_jobs():
             if self.cancel_job(job.job_id):
@@ -460,15 +559,23 @@ class DownloadEngine:
         except DownloadCancelledError:
             with self._cancelled_lock:
                 self._cancelled_job_ids.discard(job_id)
-            self._update_job_status(job_id, DownloadStatus.CANCELLED)
-            logger.info("Job %s cancelled (was active)", job_id[:8])
+            with self._jobs_lock:
+                is_pause = job_id in self._paused_job_ids
+                if is_pause:
+                    self._paused_job_ids.discard(job_id)
+            if is_pause:
+                self._update_job_status(job_id, DownloadStatus.PAUSED)
+                logger.info("Job %s paused (was active)", job_id[:8])
+            else:
+                self._update_job_status(job_id, DownloadStatus.CANCELLED)
+                logger.info("Job %s cancelled (was active)", job_id[:8])
             raise
         except (DownloadError, ProviderError) as exc:
-            logger.error("Download failed: %s -> %s", job_id[:8], exc)
+            logger.error("Download failed: %s -> %s", job_id[:8], safe_str(str(exc)))
             self._update_job_status(job_id, DownloadStatus.FAILED, error_message=str(exc))
             raise
         except Exception as exc:
-            logger.error("Unexpected download error: %s -> %s", job_id[:8], exc)
+            logger.error("Unexpected download error: %s -> %s", job_id[:8], safe_str(str(exc)))
             self._update_job_status(job_id, DownloadStatus.FAILED, error_message=str(exc))
             raise DownloadError(str(exc), url=request.url) from exc
 
@@ -479,6 +586,7 @@ class DownloadEngine:
 
         with self._jobs_lock:
             self._futures.pop(job_id, None)
+            self._paused_job_ids.discard(job_id)
         with self._cancelled_lock:
             self._cancelled_job_ids.discard(job_id)
 

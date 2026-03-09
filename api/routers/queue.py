@@ -47,3 +47,17 @@ async def resume_queue(
     """Resume the download queue."""
     app.resume()
     return {"success": True, "message": "Queue resumed"}
+
+
+@router.post(
+    "/start-all",
+    summary="Start all deferred downloads",
+    description="Move all deferred jobs to the queue; they will run according to simultaneous downloads.",
+)
+async def start_all_deferred(
+    app: GrabItDown = Depends(get_app),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Start all deferred download jobs."""
+    count = app.start_all_deferred()
+    return {"success": True, "message": f"Started {count} download(s)", "started": count}

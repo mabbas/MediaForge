@@ -213,7 +213,9 @@ def get_dashboard_html(api_base: str) -> str:
             font-weight: 600;
         }}
         .status-queued {{ background: #2a2a3e; color: #aaa; }}
+        .status-deferred {{ background: #2a2a2e; color: #a78bfa; }}
         .status-downloading {{ background: #1a2a3e; color: #60a5fa; }}
+        .status-paused {{ background: #2a2a2e; color: #fbbf24; }}
         .status-completed {{ background: #1a3a2a; color: #4ade80; }}
         .status-failed {{ background: #3a1a1a; color: #f87171; }}
         .status-cancelled {{ background: #3a3a1a; color: #fbbf24; }}
@@ -321,7 +323,7 @@ def get_dashboard_html(api_base: str) -> str:
                    autocomplete="off">
             <button class="btn btn-primary"
                     onclick="submitDownload()">
-                Download
+                Add to queue
             </button>
         </div>
 
@@ -377,6 +379,12 @@ def get_dashboard_html(api_base: str) -> str:
 
         <div class="section">
             <div class="section-title">Downloads</div>
+            <div class="queue-actions" style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+                <button type="button" class="btn btn-primary btn-sm" id="btn-start-all"
+                    onclick="startAllDownloads()">Start all download</button>
+                <button type="button" class="btn btn-outline btn-sm" id="btn-pause-all"
+                    onclick="pauseQueue()">Pause all</button>
+            </div>
             <div id="clip-job-card" class="clip-job-card job-card">
                 <div class="job-info">
                     <div class="job-title">✂️ Extracting clip…</div>
@@ -391,7 +399,7 @@ def get_dashboard_html(api_base: str) -> str:
             <div class="job-list" id="job-list">
                 <div class="empty-state">
                     <div class="icon">📥</div>
-                    <div>No downloads yet. Paste a URL above to start.</div>
+                    <div>No downloads yet. Paste a URL and click Add to queue, then Start all or start each job.</div>
                 </div>
             </div>
         </div>
@@ -543,7 +551,7 @@ def get_dashboard_html(api_base: str) -> str:
         try {{
             if (isPlaylistUrl(url)) {{
                 const data = await api('POST', '/downloads/playlist', {{
-                    url, mode, quality, concurrency: 3
+                    url, mode, quality, concurrency: 3, start: false
                 }});
                 const jobList = data.jobs || [];
                 const n = jobList.length;
@@ -554,20 +562,20 @@ def get_dashboard_html(api_base: str) -> str:
                     }});
                     renderJobs();
                     document.getElementById('url-input').value = '';
-                    toast('Playlist queued: ' + n + ' videos', 'success');
+                    toast('Added to queue: ' + n + ' videos', 'success');
                 }} else {{
                     toast(data.error || 'No videos in playlist', 'error');
                 }}
-            }} else {{
-                const data = await api('POST', '/downloads', {{
-                    url, mode, quality, priority
+                }} else {{
+                    const data = await api('POST', '/downloads', {{
+                    url, mode, quality, priority, start: false
                 }});
                 if (data.success && data.job) {{
                     jobs[data.job.job_id] = data.job;
                     subscribeJob(data.job.job_id);
                     renderJobs();
                     document.getElementById('url-input').value = '';
-                    toast('Download queued: ' + (data.job.title || url.slice(0, 50)), 'success');
+                    toast('Added to queue: ' + (data.job.title || url.slice(0, 50)), 'success');
                 }} else {{
                     toast(data.error || 'Failed to queue', 'error');
                 }}
@@ -577,10 +585,53 @@ def get_dashboard_html(api_base: str) -> str:
         }}
     }}
 
+    async function startJob(jobId) {{
+        try {{
+            await api('POST', '/downloads/' + jobId + '/start');
+            toast('Download started', 'success');
+            refreshJobs();
+            refreshStats();
+        }} catch (e) {{
+            toast(e.message || 'Failed to start', 'error');
+        }}
+    }}
+
+    async function startAllDownloads() {{
+        try {{
+            const data = await api('POST', '/queue/start-all');
+            const n = data.started ?? 0;
+            if (n > 0) toast('Started ' + n + ' download(s)', 'success');
+            else toast('No deferred downloads to start', 'info');
+            refreshJobs();
+            refreshStats();
+        }} catch (e) {{
+            toast(e.message || 'Failed to start all', 'error');
+        }}
+    }}
+
+    async function pauseJob(jobId) {{
+        try {{
+            await api('POST', '/downloads/' + jobId + '/pause');
+            toast('Download paused', 'info');
+            refreshJobs();
+            refreshStats();
+        }} catch (e) {{
+            toast(e.message || 'Failed to pause', 'error');
+        }}
+    }}
+
     async function cancelJob(jobId) {{
-        await api('POST', '/downloads/' + jobId + '/cancel');
-        toast('Cancelled', 'info');
-        refreshJobs();
+        const job = jobs[jobId];
+        if (job && job.status === 'cancelled') return;
+        if (job) {{ job.status = 'cancelled'; renderJobs(); }}
+        try {{
+            await api('POST', '/downloads/' + jobId + '/cancel');
+            toast('Cancelled', 'info');
+            refreshJobs();
+        }} catch (e) {{
+            toast(e.message || 'Failed to cancel', 'error');
+            refreshJobs();
+        }}
     }}
 
     async function resumeJob(jobId) {{
@@ -914,12 +965,25 @@ def get_dashboard_html(api_base: str) -> str:
                 .filter(Boolean).join(' • ');
 
             let actions = '';
-            if (['queued','downloading'].includes(j.status)) {{
-                actions = '<button class="btn btn-danger btn-sm"' +
+            if (j.status === 'cancelled' || j.status === 'completed') {{
+                actions = '';
+            }} else if (j.status === 'deferred') {{
+                actions = '<button class="btn btn-primary btn-sm"' +
+                    ' onclick="startJob(\\''+j.job_id+'\\')">Download</button> ' +
+                    '<button class="btn btn-outline btn-sm"' +
+                    ' onclick="pauseJob(\\''+j.job_id+'\\')">Pause</button> ' +
+                    '<button class="btn btn-danger btn-sm"' +
+                    ' onclick="cancelJob(\\''+j.job_id+'\\')">Cancel</button>';
+            }} else if (['queued','downloading'].includes(j.status)) {{
+                actions = '<button class="btn btn-outline btn-sm"' +
+                    ' onclick="pauseJob(\\''+j.job_id+'\\')">Pause</button> ' +
+                    '<button class="btn btn-danger btn-sm"' +
                     ' onclick="cancelJob(\\''+j.job_id+'\\')">Cancel</button>';
             }} else if (['paused','interrupted','failed'].includes(j.status)) {{
                 actions = '<button class="btn btn-outline btn-sm"' +
-                    ' onclick="resumeJob(\\''+j.job_id+'\\')">Resume</button>';
+                    ' onclick="resumeJob(\\''+j.job_id+'\\')">Resume</button> ' +
+                    '<button class="btn btn-danger btn-sm"' +
+                    ' onclick="cancelJob(\\''+j.job_id+'\\')">Cancel</button>';
             }}
 
             return '<div class="job-card">' +

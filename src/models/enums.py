@@ -47,6 +47,7 @@ class DownloadStatus(str, Enum):
     """Lifecycle states for a download."""
 
     CREATED = "created"
+    DEFERRED = "deferred"  # Added to queue but not started (waiting for Start)
     QUEUED = "queued"
     DOWNLOADING = "downloading"
     PROCESSING = "processing"
