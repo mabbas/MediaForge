@@ -116,6 +116,34 @@ class DownloadQueue:
                         return True
             return False
 
+    def move_up(self, job_id: str) -> bool:
+        """Move a job one position up within its priority queue. Returns True if moved."""
+        with self._lock:
+            for _priority, queue in self._queues.items():
+                for idx, job in enumerate(queue):
+                    if job.job_id == job_id:
+                        if idx <= 0:
+                            return False
+                        # Swap with previous
+                        queue[idx], queue[idx - 1] = queue[idx - 1], queue[idx]
+                        logger.debug("Job %s moved up (priority=%s)", job_id[:8], _priority)
+                        return True
+            return False
+
+    def move_down(self, job_id: str) -> bool:
+        """Move a job one position down within its priority queue. Returns True if moved."""
+        with self._lock:
+            for _priority, queue in self._queues.items():
+                for idx, job in enumerate(queue):
+                    if job.job_id == job_id:
+                        if idx >= len(queue) - 1:
+                            return False
+                        # Swap with next
+                        queue[idx], queue[idx + 1] = queue[idx + 1], queue[idx]
+                        logger.debug("Job %s moved down (priority=%s)", job_id[:8], _priority)
+                        return True
+            return False
+
     def get_all_jobs(self) -> List[DownloadJob]:
         """Get all queued jobs in priority order."""
         with self._lock:

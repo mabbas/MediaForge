@@ -92,6 +92,14 @@ def get_dashboard_html(api_base: str) -> str:
             font-size: 12px;
             border-radius: 6px;
         }}
+        .btn-icon {{
+            padding: 4px 10px;
+            min-width: 32px;
+        }}
+        .move-btns {{
+            display: inline-flex;
+            gap: 2px;
+        }}
         .btn-danger {{ background: #dc2626; color: white; }}
         .btn-outline {{
             background: transparent;
@@ -641,6 +649,26 @@ def get_dashboard_html(api_base: str) -> str:
         refreshStats();
     }}
 
+    async function moveJobUp(jobId) {{
+        try {{
+            await api('POST', '/downloads/' + jobId + '/move-up');
+            toast('Moved up', 'success');
+            refreshJobs();
+        }} catch (e) {{
+            toast(e.message || 'Cannot move up', 'error');
+        }}
+    }}
+
+    async function moveJobDown(jobId) {{
+        try {{
+            await api('POST', '/downloads/' + jobId + '/move-down');
+            toast('Moved down', 'success');
+            refreshJobs();
+        }} catch (e) {{
+            toast(e.message || 'Cannot move down', 'error');
+        }}
+    }}
+
     async function pauseQueue() {{
         await api('POST', '/queue/pause');
         toast('Queue paused', 'info');
@@ -975,7 +1003,13 @@ def get_dashboard_html(api_base: str) -> str:
                     '<button class="btn btn-danger btn-sm"' +
                     ' onclick="cancelJob(\\''+j.job_id+'\\')">Cancel</button>';
             }} else if (['queued','downloading'].includes(j.status)) {{
-                actions = '<button class="btn btn-outline btn-sm"' +
+                const moveBtns = j.status === 'queued' ?
+                    '<span class="move-btns">' +
+                    '<button class="btn btn-outline btn-sm btn-icon" title="Move up" onclick="moveJobUp(\\''+j.job_id+'\\')">↑</button>' +
+                    '<button class="btn btn-outline btn-sm btn-icon" title="Move down" onclick="moveJobDown(\\''+j.job_id+'\\')">↓</button>' +
+                    '</span> ' : '';
+                actions = moveBtns +
+                    '<button class="btn btn-outline btn-sm"' +
                     ' onclick="pauseJob(\\''+j.job_id+'\\')">Pause</button> ' +
                     '<button class="btn btn-danger btn-sm"' +
                     ' onclick="cancelJob(\\''+j.job_id+'\\')">Cancel</button>';

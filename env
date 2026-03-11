@@ -1,0 +1,6 @@
+# GrabItDown — local env (see .env.example for all options)
+# ffmpeg/ffprobe location for YouTube downloads
+GID_FFMPEG_LOCATION=C:\ffmpeg\bin
+
+# PostgreSQL
+GID_API_DATABASE_URL=postgresql+asyncpg://grab_user:grabpass@localhost:5432/grab_db

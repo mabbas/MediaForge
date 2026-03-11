@@ -205,6 +205,48 @@ async def cancel_download(
     return {"success": True, "message": "Cancelled"}
 
 
+@router.post(
+    "/{job_id}/move-up",
+    summary="Move download up",
+    description="Move a queued job one position up in the download list.",
+    status_code=200,
+)
+async def move_download_up(
+    job_id: str,
+    app: GrabItDown = Depends(get_app),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Move a queued job up in priority order."""
+    ok = app.move_job_up(job_id)
+    if not ok:
+        raise HTTPException(
+            status_code=400,
+            detail="Job not found in queue or already at top",
+        )
+    return {"success": True, "message": "Moved up"}
+
+
+@router.post(
+    "/{job_id}/move-down",
+    summary="Move download down",
+    description="Move a queued job one position down in the download list.",
+    status_code=200,
+)
+async def move_download_down(
+    job_id: str,
+    app: GrabItDown = Depends(get_app),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Move a queued job down in priority order."""
+    ok = app.move_job_down(job_id)
+    if not ok:
+        raise HTTPException(
+            status_code=400,
+            detail="Job not found in queue or already at bottom",
+        )
+    return {"success": True, "message": "Moved down"}
+
+
 @router.get(
     "",
     summary="List downloads",

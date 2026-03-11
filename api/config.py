@@ -8,10 +8,22 @@ from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
+def _env_file_path() -> str | None:
+    """Path to .env in project root (same as env_loader), so settings match regardless of cwd."""
+    try:
+        from src.env_loader import _project_root
+        root = _project_root()
+        path = root / ".env"
+        return str(path) if path.is_file() else None
+    except Exception:
+        return None
+
+
 class APISettings(BaseSettings):
     """API-specific settings.
 
     Loaded from environment variables with GID_API_ prefix.
+    .env is loaded from project root (not cwd) so it is always found.
     """
 
     # Server
@@ -27,10 +39,8 @@ class APISettings(BaseSettings):
         "http://localhost:8000",
     ]
 
-    # Database (PostgreSQL)
-    database_url: str = (
-        "postgresql+asyncpg://gid_user:gid_dev_password@localhost:5432/grabitdown"
-    )
+    # Database — must be set in .env as GID_API_DATABASE_URL (e.g. postgresql+asyncpg://... or sqlite+aiosqlite:///...)
+    database_url: str = Field(..., description="Set GID_API_DATABASE_URL in .env")
     database_schema: str = "gid"
     database_pool_size: int = 10
     database_max_overflow: int = 20
@@ -61,7 +71,7 @@ class APISettings(BaseSettings):
 
     model_config = {
         "env_prefix": "GID_API_",
-        "env_file": ".env",
+        "env_file": _env_file_path() or ".env",  # project root .env so it's found regardless of cwd
         "extra": "ignore",  # allow other env vars (e.g. GID_FFMPEG_LOCATION) without declaring all
     }
 

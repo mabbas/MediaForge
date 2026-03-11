@@ -391,9 +391,26 @@ class DownloadEngine:
         return self._progress_tracker.get(job_id)
 
     def get_all_jobs(self) -> List[DownloadJob]:
-        """Get all tracked jobs."""
+        """Get all tracked jobs in display order: downloading, queued (queue order), deferred, then rest."""
         with self._jobs_lock:
-            return list(self._jobs.values())
+            all_jobs = list(self._jobs.values())
+        queue_ordered = self._queue.get_all_jobs()
+        queue_ids = {j.job_id for j in queue_ordered}
+        queue_list = list(queue_ordered)
+        downloading: List[DownloadJob] = []
+        deferred: List[DownloadJob] = []
+        rest: List[DownloadJob] = []
+        for job in all_jobs:
+            sid = job.progress.status
+            if sid == DownloadStatus.DOWNLOADING:
+                downloading.append(job)
+            elif job.job_id in queue_ids:
+                pass  # already in queue_list
+            elif sid == DownloadStatus.DEFERRED:
+                deferred.append(job)
+            else:
+                rest.append(job)
+        return downloading + queue_list + deferred + rest
 
     def get_active_jobs(self) -> List[DownloadJob]:
         """Get currently downloading jobs."""
@@ -417,6 +434,14 @@ class DownloadEngine:
             "is_paused": self._is_paused,
             "is_running": self._is_running,
         }
+
+    def move_job_up(self, job_id: str) -> bool:
+        """Move a queued job one position up. Returns True if moved."""
+        return self._queue.move_up(job_id)
+
+    def move_job_down(self, job_id: str) -> bool:
+        """Move a queued job one position down. Returns True if moved."""
+        return self._queue.move_down(job_id)
 
     @property
     def progress_tracker(self) -> ProgressTracker:

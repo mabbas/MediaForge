@@ -263,6 +263,14 @@ class GrabItDown:
         """Re-queue a failed/paused/interrupted job (same job_id). Returns True if requeued."""
         return self._engine.requeue_job(job_id)
 
+    def move_job_up(self, job_id: str) -> bool:
+        """Move a queued job one position up in the download list. Returns True if moved."""
+        return self._engine.move_job_up(job_id)
+
+    def move_job_down(self, job_id: str) -> bool:
+        """Move a queued job one position down in the download list. Returns True if moved."""
+        return self._engine.move_job_down(job_id)
+
     # ── Info APIs ───────────────────────────────────────────────────────────
 
     def get_info(self, url: str) -> dict:

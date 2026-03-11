@@ -133,9 +133,11 @@ class GrabItDownDesktop:
                     saved_prefs["minimize_to_tray"],
                 )
 
-        # Determine database URL (SQLite for desktop)
+        # Determine database URL (SQLite for desktop) and set before any API import
+        # so .env / defaults don't override with PostgreSQL (avoids auth errors).
         db_path = Path(self.settings.data_dir) / "data" / "grabitdown.db"
         db_url = f"sqlite+aiosqlite:///{db_path}"
+        os.environ["GID_API_DATABASE_URL"] = db_url
 
         # Register /dashboard route so fallback browser opens the UI (not /docs)
         self._register_dashboard_route()

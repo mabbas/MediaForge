@@ -15,6 +15,16 @@ dependencies = [
   "click>=8.0",
   "rich>=13.0",
   "yt-dlp>=2024.0",
+  # API & server (websockets required for /api/v1/ws/progress)
+  "uvicorn[standard]>=0.30.0",
+  "websockets>=14.0",
+  "fastapi>=0.115.0",
+  # Database
+  "sqlalchemy[asyncio]>=2.0",
+  "asyncpg>=0.29.0",
+  "aiosqlite>=0.20.0",
+  # Config
+  "python-dotenv>=1.0.0",
 ]
 
 [project.optional-dependencies]

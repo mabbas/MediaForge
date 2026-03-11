@@ -158,8 +158,8 @@ class YouTubeProvider(BaseMediaProvider):
     def _get_ffmpeg_location(self) -> str | None:
         """Return directory containing ffmpeg/ffprobe, or None if not found.
 
-        Reads GID_FFMPEG_LOCATION from env (loaded from project .env).         On Windows use forward slashes in .env to avoid backslash issues, e.g.:
-          GID_FFMPEG_LOCATION=C:/ffmpeg/bin
+        Reads GID_FFMPEG_LOCATION from env (loaded from project .env).
+        On Windows, backslashes in .env are normalized so C:\\ffmpeg\\bin works.
         """
         raw = os.environ.get("GID_FFMPEG_LOCATION", "").strip() or None
         if not raw:
@@ -167,11 +167,11 @@ class YouTubeProvider(BaseMediaProvider):
             if ffmpeg_path:
                 return str(Path(ffmpeg_path).resolve().parent)
             return None
-        # Normalize path: .env on Windows may have backslashes interpreted (\f, \b)
-        ffmpeg_dir = Path(raw).expanduser().resolve()
+        # Normalize: Windows .env may have backslashes (e.g. C:\ffmpeg\bin)
+        raw_normalized = raw.replace("\\", "/")
+        ffmpeg_dir = Path(raw_normalized).expanduser().resolve()
         if ffmpeg_dir.is_dir():
             return str(ffmpeg_dir)
-        # Try as literal path in case expanduser/resolve changed it
         if os.path.isdir(raw):
             return os.path.normpath(raw)
         return None
@@ -219,25 +219,30 @@ class YouTubeProvider(BaseMediaProvider):
                 opts["postprocessors"].append({"key": "EmbedThumbnail"})
                 opts["writethumbnail"] = True
         else:
-            format_str = self._build_format_string(request.quality)
-            opts["format"] = format_str
-            opts["merge_output_format"] = request.video_format.value
-            if not opts.get("ffmpeg_location"):
+            has_ffmpeg = bool(opts.get("ffmpeg_location"))
+            if has_ffmpeg:
+                format_str = self._build_format_string(request.quality)
+                opts["format"] = format_str
+                opts["merge_output_format"] = request.video_format.value
+            else:
+                # No ffmpeg: use best single format (no merge) so downloads still work
+                opts["format"] = self._build_format_string_no_merge(request.quality)
                 logger.warning(
-                    "ffmpeg_location not set; video+audio merge may fail. "
-                    "Set GID_FFMPEG_LOCATION to the directory containing ffmpeg."
+                    "ffmpeg not found; using single-format download (no merge). "
+                    "Install ffmpeg and set GID_FFMPEG_LOCATION for best quality."
                 )
 
-            if request.embed_subtitles and request.subtitle_languages:
-                opts["writesubtitles"] = True
-                opts["subtitleslangs"] = request.subtitle_languages
-                opts["postprocessors"] = opts.get("postprocessors", [])
-                opts["postprocessors"].append({"key": "FFmpegEmbedSubtitle"})
-
-            if request.embed_thumbnail:
-                opts["postprocessors"] = opts.get("postprocessors", [])
-                opts["postprocessors"].append({"key": "EmbedThumbnail"})
-                opts["writethumbnail"] = True
+            # Thumbnail/subtitle embedding requires ffmpeg; skip when missing to avoid postprocess failure and leftover .webp
+            if has_ffmpeg:
+                if request.embed_subtitles and request.subtitle_languages:
+                    opts["writesubtitles"] = True
+                    opts["subtitleslangs"] = request.subtitle_languages
+                    opts["postprocessors"] = opts.get("postprocessors", [])
+                    opts["postprocessors"].append({"key": "FFmpegEmbedSubtitle"})
+                if request.embed_thumbnail:
+                    opts["postprocessors"] = opts.get("postprocessors", [])
+                    opts["postprocessors"].append({"key": "EmbedThumbnail"})
+                    opts["writethumbnail"] = True
 
         if progress_callback:
             opts["progress_hooks"] = [lambda d: self._progress_hook(d, progress_callback)]
@@ -245,12 +250,7 @@ class YouTubeProvider(BaseMediaProvider):
         return opts
 
     def _build_format_string(self, quality: Quality) -> str:
-        """Build yt-dlp format string for video quality.
-
-        Use only merged video+audio (no single-stream fallback) so we never
-        get video-only downloads without sound. Merging requires ffmpeg to be
-        installed and on PATH (or set GID_FFMPEG_LOCATION).
-        """
+        """Build yt-dlp format string for video quality (requires ffmpeg to merge)."""
         quality_map: Dict[Quality, str] = {
             Quality.Q_2160P: "bestvideo[height<=2160]+bestaudio/bestvideo+bestaudio",
             Quality.Q_1440P: "bestvideo[height<=1440]+bestaudio/bestvideo+bestaudio",
@@ -262,6 +262,11 @@ class YouTubeProvider(BaseMediaProvider):
             Quality.WORST: "worstvideo+worstaudio",
         }
         return quality_map.get(quality, "bestvideo+bestaudio")
+
+    def _build_format_string_no_merge(self, quality: Quality) -> str:
+        """Best single-format string when ffmpeg is not available (no merge)."""
+        # Prefer a single file that already has audio+video (e.g. some 720p/360p streams)
+        return "best[ext=mp4]/best[height<=720]/best"
 
     def _map_info_to_media(self, info_dict: Dict[str, Any]) -> MediaInfo:
         """Map yt-dlp info_dict to our MediaInfo model."""

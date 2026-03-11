@@ -1,0 +1,30 @@
+# GrabItDown — dependency options
+#
+# Option 1 (recommended): Install the project in editable mode.
+# This installs all dependencies from pyproject.toml automatically.
+#
+#   python.exe -m pip install --upgrade pip
+#   pip install -e .
+#
+# Option 2: Install only the packages in this file.
+#
+#   python.exe -m pip install --upgrade pip
+#   pip install -r requirements.txt
+#
+# Core API & server (websockets for /api/v1/ws/progress)
+uvicorn[standard]>=0.30.0
+websockets>=14.0
+fastapi>=0.115.0
+# Database
+sqlalchemy[asyncio]>=2.0
+asyncpg>=0.29.0
+aiosqlite>=0.20.0
+# Config
+python-dotenv>=1.0.0
+# Project already uses these (in pyproject.toml); include if using Option 2 only
+pydantic>=2.0
+pydantic-settings>=2.0
+pyyaml>=6.0
+click>=8.0
+rich>=13.0
+yt-dlp>=2024.0
