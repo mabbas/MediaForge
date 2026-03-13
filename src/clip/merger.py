@@ -371,11 +371,16 @@ def get_clip_merger() -> ClipMerger:
             pass
         ffdir = os.environ.get("GID_FFMPEG_LOCATION", "").strip() or None
         if ffdir:
-            p = Path(ffdir)
-            _merger = ClipMerger(
-                ffmpeg_path=str(p / "ffmpeg"),
-                ffprobe_path=str(p / "ffprobe"),
-            )
+            # Normalize Windows path from .env (e.g. C:\ffmpeg\bin)
+            ffdir_normalized = Path(ffdir.replace("\\", "/").expanduser()).resolve()
+            if ffdir_normalized.is_dir():
+                exe_suffix = ".exe" if os.name == "nt" else ""
+                _merger = ClipMerger(
+                    ffmpeg_path=str(ffdir_normalized / f"ffmpeg{exe_suffix}"),
+                    ffprobe_path=str(ffdir_normalized / f"ffprobe{exe_suffix}"),
+                )
+            else:
+                _merger = ClipMerger()
         else:
             _merger = ClipMerger()
     return _merger

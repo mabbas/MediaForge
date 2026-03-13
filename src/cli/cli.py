@@ -1210,11 +1210,26 @@ def check(ctx: click.Context) -> None:
         errors.append("providers")
 
     console.print("[bold]ffmpeg...[/bold]")
+    import os
+    try:
+        from src.env_loader import load_project_dotenv
+        load_project_dotenv()
+    except Exception:
+        pass
     ffmpeg_path = shutil.which("ffmpeg")
+    if not ffmpeg_path:
+        ffdir = os.environ.get("GID_FFMPEG_LOCATION", "").strip() or None
+        if ffdir:
+            p = Path(ffdir.replace("\\", "/").expanduser()).resolve()
+            if p.is_dir():
+                exe = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+                candidate = p / exe
+                if candidate.is_file():
+                    ffmpeg_path = str(candidate)
     if ffmpeg_path:
         try:
             result = subprocess.run(
-                ["ffmpeg", "-version"],
+                [ffmpeg_path, "-version"],
                 capture_output=True,
                 text=True,
                 timeout=5,
@@ -1225,7 +1240,8 @@ def check(ctx: click.Context) -> None:
             print_success(f"Found at: {ffmpeg_path}")
     else:
         print_warning(
-            "ffmpeg not found. Video merging and audio extraction may fail."
+            "ffmpeg not found. Set GID_FFMPEG_LOCATION in .env or add to PATH. "
+            "Video merging and audio extraction may fail."
         )
 
     console.print("[bold]yt-dlp...[/bold]")

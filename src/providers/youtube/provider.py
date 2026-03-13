@@ -156,25 +156,9 @@ class YouTubeProvider(BaseMediaProvider):
     # ── Private helpers ──────────────────────────────────────────────────────
 
     def _get_ffmpeg_location(self) -> str | None:
-        """Return directory containing ffmpeg/ffprobe, or None if not found.
-
-        Reads GID_FFMPEG_LOCATION from env (loaded from project .env).
-        On Windows, backslashes in .env are normalized so C:\\ffmpeg\\bin works.
-        """
-        raw = os.environ.get("GID_FFMPEG_LOCATION", "").strip() or None
-        if not raw:
-            ffmpeg_path = shutil.which("ffmpeg")
-            if ffmpeg_path:
-                return str(Path(ffmpeg_path).resolve().parent)
-            return None
-        # Normalize: Windows .env may have backslashes (e.g. C:\ffmpeg\bin)
-        raw_normalized = raw.replace("\\", "/")
-        ffmpeg_dir = Path(raw_normalized).expanduser().resolve()
-        if ffmpeg_dir.is_dir():
-            return str(ffmpeg_dir)
-        if os.path.isdir(raw):
-            return os.path.normpath(raw)
-        return None
+        """Return directory containing ffmpeg/ffprobe (shared with clip extractor)."""
+        from src.env_loader import get_ffmpeg_location
+        return get_ffmpeg_location()
 
     def _build_base_opts(self) -> Dict[str, Any]:
         """Build base yt-dlp options shared across operations."""

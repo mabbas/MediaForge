@@ -264,8 +264,10 @@ class GrabItDownDesktop:
             import webbrowser
             webbrowser.open(self.server.base_url.rstrip("/") + "/dashboard")
             print()
-            print("GrabItDown is running in your browser (pywebview not installed).")
-            print("Install the desktop window:  pip install pywebview")
+            print("GrabItDown is running in your browser (desktop window not available).")
+            print("For the native desktop window, install:  pip install pywebview")
+            if sys.platform == "win32":
+                print("  On Windows, if that fails (pythonnet build), the app still works in the browser.")
             print(f"Dashboard: {self.server.base_url.rstrip('/')}/dashboard")
             print("Press Ctrl+C to stop.")
             print()

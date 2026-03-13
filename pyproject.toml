@@ -28,7 +28,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Native desktop window (optional; on Windows needs pythonnet which may not build on Python 3.14)
+# Native desktop window. On Windows, pywebview needs pythonnet which may fail to build;
+# use browser fallback (python -m desktop) or install a pre-built pythonnet wheel.
 desktop = [
   "pywebview>=4.0",
 ]

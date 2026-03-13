@@ -10,6 +10,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
+from api.config import get_api_settings
 from api.schemas.clips import (
     ClipExtractRequest,
     ClipResultResponse,
@@ -20,6 +21,7 @@ from src.clip.extractor import (
     ClipExtractor,
     ClipRequest,
     get_clip_extractor,
+    reset_clip_extractor,
 )
 
 logger = logging.getLogger(__name__)
@@ -30,6 +32,19 @@ router = APIRouter(
 )
 
 
+def _ensure_ffmpeg_env_from_config() -> None:
+    """Ensure GID_FFMPEG_LOCATION is in os.environ from API config (e.g. when run via desktop)."""
+    if os.environ.get("GID_FFMPEG_LOCATION", "").strip():
+        return
+    try:
+        settings = get_api_settings()
+        if getattr(settings, "ffmpeg_location", None):
+            os.environ["GID_FFMPEG_LOCATION"] = settings.ffmpeg_location
+            reset_clip_extractor()
+    except Exception:
+        pass
+
+
 @router.post(
     "/extract",
     response_model=ClipResultResponse,
@@ -38,6 +53,7 @@ router = APIRouter(
 )
 async def extract_clip(request: ClipExtractRequest):
     """Extract a clip from a video."""
+    _ensure_ffmpeg_env_from_config()
     extractor = get_clip_extractor()
 
     valid, error = extractor.validate_timestamps(

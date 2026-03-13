@@ -252,21 +252,37 @@ class ClipExtractor:
             return float(parts[0])
         raise ValueError(f"Invalid timestamp format: {ts}")
 
+    @staticmethod
+    def _resolve_ffmpeg_dir_for_ytdlp() -> str | None:
+        """Same ffmpeg resolution as download (YouTube) — single source of truth."""
+        from src.env_loader import get_ffmpeg_location
+        return get_ffmpeg_location()
+
     def _download_source(self, url: str, clip_id: str) -> str:
-        """Download video from URL for clipping."""
+        """Download video from URL for clipping.
+
+        If ffmpeg is available (GID_FFMPEG_LOCATION or PATH), uses bestvideo+bestaudio
+        and merges to mp4. Otherwise uses a single format that does not require merging.
+        """
         import yt_dlp
 
         output_template = str(
             Path(self._output_dir) / f"_temp_{clip_id}.%(ext)s"
         )
 
+        ffmpeg_dir = self._resolve_ffmpeg_dir_for_ytdlp()
         ydl_opts = {
             "outtmpl": output_template,
             "quiet": True,
             "no_warnings": True,
-            "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-            "merge_output_format": "mp4",
         }
+        if ffmpeg_dir:
+            ydl_opts["ffmpeg_location"] = ffmpeg_dir
+            ydl_opts["format"] = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+            ydl_opts["merge_output_format"] = "mp4"
+        else:
+            # No ffmpeg: avoid merge so yt-dlp does not require ffmpeg
+            ydl_opts["format"] = "best[ext=mp4]/best"
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
@@ -351,20 +367,21 @@ _extractor: ClipExtractor | None = None
 
 
 def get_clip_extractor() -> ClipExtractor:
-    """Return the global ClipExtractor instance, creating it if needed."""
+    """Return the global ClipExtractor instance, creating it if needed.
+
+    Uses same get_ffmpeg_location() as download (YouTube) so ffmpeg is found
+    the same way for both trimming and URL-download steps.
+    """
     global _extractor
     if _extractor is None:
-        try:
-            from src.env_loader import load_project_dotenv
-            load_project_dotenv()
-        except Exception:  # noqa: S110
-            pass
-        ffdir = os.environ.get("GID_FFMPEG_LOCATION", "").strip() or None
+        from src.env_loader import get_ffmpeg_location
+        ffdir = get_ffmpeg_location()
         if ffdir:
             p = Path(ffdir)
+            exe_suffix = ".exe" if os.name == "nt" else ""
             _extractor = ClipExtractor(
-                ffmpeg_path=str(p / "ffmpeg"),
-                ffprobe_path=str(p / "ffprobe"),
+                ffmpeg_path=str(p / f"ffmpeg{exe_suffix}"),
+                ffprobe_path=str(p / f"ffprobe{exe_suffix}"),
             )
         else:
             _extractor = ClipExtractor()

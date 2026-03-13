@@ -58,9 +58,24 @@ async def readiness(
         db_status = f"error: {str(e)[:50]}"
         overall = "unhealthy"
 
+    import os
     import shutil
+    from pathlib import Path
 
-    ffmpeg_status = "ok" if shutil.which("ffmpeg") else "not found"
+    try:
+        from src.env_loader import load_project_dotenv
+        load_project_dotenv()
+    except Exception:
+        pass
+    ffmpeg_ok = bool(shutil.which("ffmpeg"))
+    if not ffmpeg_ok:
+        ffdir = os.environ.get("GID_FFMPEG_LOCATION", "").strip() or None
+        if ffdir:
+            p = Path(ffdir.replace("\\", "/").expanduser()).resolve()
+            if p.is_dir():
+                ffmpeg_exe = p / "ffmpeg"
+                ffmpeg_ok = ffmpeg_exe.is_file() or (p / "ffmpeg.exe").is_file()
+    ffmpeg_status = "ok" if ffmpeg_ok else "not found"
 
     yt_dlp_status = "not installed"
     try:
