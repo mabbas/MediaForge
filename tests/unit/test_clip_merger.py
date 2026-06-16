@@ -16,20 +16,39 @@ from src.clip.merger import (
 )
 
 
-@pytest.fixture
-def merger(tmp_path):
-    return ClipMerger(output_dir=str(tmp_path))
+from src.exceptions import FFmpegNotFoundError
 
 
 @pytest.fixture
-def sample_clips(tmp_path):
+def ffmpeg_paths():
+    try:
+        from src.env_loader import resolve_ffmpeg_binaries
+
+        return resolve_ffmpeg_binaries()
+    except FFmpegNotFoundError:
+        pytest.skip("ffmpeg not found — set GID_FFMPEG_LOCATION or PATH")
+
+
+@pytest.fixture
+def merger(tmp_path, ffmpeg_paths):
+    ffmpeg, ffprobe = ffmpeg_paths
+    return ClipMerger(
+        ffmpeg_path=ffmpeg,
+        ffprobe_path=ffprobe,
+        output_dir=str(tmp_path),
+    )
+
+
+@pytest.fixture
+def sample_clips(tmp_path, ffmpeg_paths):
     """Create two 5-second test video clips."""
+    ffmpeg, _ = ffmpeg_paths
     clips = []
     for i in range(2):
         path = str(tmp_path / f"clip_{i}.mp4")
         freq = 440 + i * 220
         cmd = [
-            "ffmpeg", "-y",
+            ffmpeg, "-y",
             "-f", "lavfi", "-i", "testsrc=duration=5:size=320x240:rate=30",
             "-f", "lavfi", "-i", f"sine=frequency={freq}:duration=5",
             "-c:v", "libx264", "-preset", "ultrafast",
@@ -38,19 +57,20 @@ def sample_clips(tmp_path):
         ]
         result = subprocess.run(cmd, capture_output=True, timeout=30)
         if result.returncode != 0:
-            pytest.skip("FFmpeg not available")
+            pytest.skip(f"FFmpeg failed: {result.stderr[-200:]}")
         clips.append(path)
     return clips
 
 
 @pytest.fixture
-def three_clips(tmp_path):
+def three_clips(tmp_path, ffmpeg_paths):
     """Create three test clips."""
+    ffmpeg, _ = ffmpeg_paths
     clips = []
     for i in range(3):
         path = str(tmp_path / f"clip3_{i}.mp4")
         cmd = [
-            "ffmpeg", "-y",
+            ffmpeg, "-y",
             "-f", "lavfi", "-i", "testsrc=duration=3:size=320x240:rate=30",
             "-f", "lavfi", "-i", f"sine=frequency={440+i*100}:duration=3",
             "-c:v", "libx264", "-preset", "ultrafast",
@@ -140,7 +160,7 @@ def test_detect_strategy_same_codec(merger, sample_clips):
     assert strategy == "concat"
 
 
-def test_merger_singleton():
+def test_merger_singleton(ffmpeg_paths):
     reset_clip_merger()
     m1 = get_clip_merger()
     m2 = get_clip_merger()

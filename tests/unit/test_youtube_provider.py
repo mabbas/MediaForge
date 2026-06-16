@@ -91,12 +91,13 @@ def test_youtube_cannot_handle_random() -> None:
 
 
 def test_youtube_build_format_string_1080p() -> None:
-    """1080p format string correct."""
+    """1080p format string includes merge and combined-stream fallbacks."""
     p = YouTubeProvider()
     fmt = p._build_format_string(Quality.Q_1080P)
     assert "1080" in fmt
     assert "bestvideo" in fmt
     assert "bestaudio" in fmt
+    assert "/best" in fmt
 
 
 def test_youtube_build_format_string_best() -> None:
@@ -104,6 +105,14 @@ def test_youtube_build_format_string_best() -> None:
     p = YouTubeProvider()
     fmt = p._build_format_string(Quality.BEST)
     assert "bestvideo+bestaudio" in fmt
+    assert "/best" in fmt
+
+
+def test_youtube_build_format_string_no_merge_1080p() -> None:
+    p = YouTubeProvider()
+    fmt = p._build_format_string_no_merge(Quality.Q_1080P)
+    assert "best[height<=1080]" in fmt
+    assert "bestvideo" not in fmt
 
 
 def test_youtube_build_format_string_worst() -> None:

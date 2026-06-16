@@ -37,6 +37,7 @@ async def update_job_status(
     error_message: str | None = None,
     file_path: str | None = None,
     file_size_bytes: int | None = None,
+    title: str | None = None,
 ) -> None:
     """Update a job's status and progress in the database."""
     result = await session.execute(select(DownloadJobDB).where(DownloadJobDB.id == job_id))
@@ -60,6 +61,8 @@ async def update_job_status(
         row.file_path = file_path
     if file_size_bytes is not None:
         row.file_size_bytes = file_size_bytes
+    if title is not None:
+        row.title = title
     if status in ("completed", "failed", "cancelled"):
         row.completed_at = datetime.utcnow()
     session.add(row)
@@ -124,13 +127,25 @@ async def persist_job(
 def job_to_response(job: DownloadJob) -> dict:
     """Map in-memory DownloadJob to API response dict."""
     progress = job.progress
+    result = job.result
+    req = job.request
     return {
         "job_id": job.job_id,
         "status": progress.status.value if progress else "created",
-        "url": job.request.url if job.request else "",
+        "url": req.url if req else "",
         "progress_percent": progress.percent if progress else 0.0,
         "priority": job.priority,
         "speed_human": progress.speed_human if progress else None,
         "eta_human": progress.eta_human if progress else None,
-        "title": job.title or (job.result.title if job.result else None),
+        "title": job.title or (result.title if result else None),
+        "media_type": (
+            result.media_type.value if result
+            else (req.media_type.value if req else None)
+        ),
+        "quality": (
+            result.quality if result and result.quality
+            else (req.quality.value if req else None)
+        ),
+        "error_message": result.error_message if result else None,
+        "file_path": result.file_path if result else None,
     }

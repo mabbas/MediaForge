@@ -117,6 +117,28 @@ class EngineDatabaseSync:
 
         future.add_done_callback(_remove)
 
+    def _job_result_fields(self, job_id: str) -> dict:
+        """Read final result metadata from the in-memory engine (terminal states)."""
+        try:
+            from api.dependencies import get_app
+
+            job = get_app()._engine.get_job(job_id)
+            if not job or not job.result:
+                return {}
+            result = job.result
+            fields: dict = {}
+            if result.file_path:
+                fields["file_path"] = result.file_path
+            if result.file_size_bytes is not None:
+                fields["file_size_bytes"] = result.file_size_bytes
+            if result.title:
+                fields["title"] = result.title
+            if result.error_message:
+                fields["error_message"] = result.error_message
+            return fields
+        except Exception:
+            return {}
+
     async def _sync_to_db(
         self,
         job_id: str,
@@ -128,6 +150,10 @@ class EngineDatabaseSync:
 
             if async_session_factory is None:
                 return
+
+            result_fields: dict = {}
+            if progress.status in TERMINAL_STATES:
+                result_fields = self._job_result_fields(job_id)
 
             async with async_session_factory() as session:
                 from api.services.download_service import update_job_status
@@ -141,6 +167,7 @@ class EngineDatabaseSync:
                     eta_seconds=progress.eta_seconds,
                     bytes_downloaded=progress.bytes_downloaded,
                     total_bytes=progress.total_bytes,
+                    **result_fields,
                 )
                 await session.commit()
 

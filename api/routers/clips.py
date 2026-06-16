@@ -23,6 +23,7 @@ from src.clip.extractor import (
     get_clip_extractor,
     reset_clip_extractor,
 )
+from src.exceptions import FFmpegNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,10 @@ def _ensure_ffmpeg_env_from_config() -> None:
 async def extract_clip(request: ClipExtractRequest):
     """Extract a clip from a video."""
     _ensure_ffmpeg_env_from_config()
-    extractor = get_clip_extractor()
+    try:
+        extractor = get_clip_extractor()
+    except FFmpegNotFoundError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
 
     valid, error = extractor.validate_timestamps(
         request.start_time, request.end_time

@@ -166,6 +166,12 @@ class YouTubeProvider(BaseMediaProvider):
             "quiet": True,
             "no_color": True,
             "geo_bypass": self._geo_bypass,
+            # Prefer clients that work without a local JS runtime (YouTube web needs EJS).
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["android", "web", "tv_embedded"],
+                }
+            },
         }
         if self._cookies_file:
             opts["cookiefile"] = self._cookies_file
@@ -234,23 +240,54 @@ class YouTubeProvider(BaseMediaProvider):
         return opts
 
     def _build_format_string(self, quality: Quality) -> str:
-        """Build yt-dlp format string for video quality (requires ffmpeg to merge)."""
-        quality_map: Dict[Quality, str] = {
-            Quality.Q_2160P: "bestvideo[height<=2160]+bestaudio/bestvideo+bestaudio",
-            Quality.Q_1440P: "bestvideo[height<=1440]+bestaudio/bestvideo+bestaudio",
-            Quality.Q_1080P: "bestvideo[height<=1080]+bestaudio/bestvideo+bestaudio",
-            Quality.Q_720P: "bestvideo[height<=720]+bestaudio/bestvideo+bestaudio",
-            Quality.Q_480P: "bestvideo[height<=480]+bestaudio/bestvideo+bestaudio",
-            Quality.Q_360P: "bestvideo[height<=360]+bestaudio/bestvideo+bestaudio",
-            Quality.BEST: "bestvideo+bestaudio",
-            Quality.WORST: "worstvideo+worstaudio",
-        }
-        return quality_map.get(quality, "bestvideo+bestaudio")
+        """Build yt-dlp format string for video quality (requires ffmpeg to merge).
+
+        Ends with combined-stream fallbacks so downloads still work when YouTube
+        does not expose separate video+audio streams (common without JS runtime).
+        """
+        return self._video_format_selector(quality, allow_merge=True)
 
     def _build_format_string_no_merge(self, quality: Quality) -> str:
         """Best single-format string when ffmpeg is not available (no merge)."""
-        # Prefer a single file that already has audio+video (e.g. some 720p/360p streams)
-        return "best[ext=mp4]/best[height<=720]/best"
+        return self._video_format_selector(quality, allow_merge=False)
+
+    @staticmethod
+    def _video_format_selector(quality: Quality, allow_merge: bool) -> str:
+        """Return yt-dlp format selector with progressive fallbacks."""
+        height_caps: Dict[Quality, int | None] = {
+            Quality.Q_2160P: 2160,
+            Quality.Q_1440P: 1440,
+            Quality.Q_1080P: 1080,
+            Quality.Q_720P: 720,
+            Quality.Q_480P: 480,
+            Quality.Q_360P: 360,
+            Quality.BEST: None,
+            Quality.WORST: None,
+        }
+        max_h = height_caps.get(quality)
+
+        if quality == Quality.WORST:
+            if allow_merge:
+                return "worstvideo+worstaudio/worst"
+            return "worst[ext=mp4]/worst"
+
+        if max_h is None:
+            if allow_merge:
+                return (
+                    "bestvideo[ext=mp4]+bestaudio[ext=m4a]/"
+                    "bestvideo+bestaudio/"
+                    "best[ext=mp4]/best"
+                )
+            return "best[ext=mp4]/best"
+
+        if allow_merge:
+            return (
+                f"bestvideo[height<={max_h}][ext=mp4]+bestaudio[ext=m4a]/"
+                f"bestvideo[height<={max_h}]+bestaudio/"
+                f"best[height<={max_h}][ext=mp4]/"
+                f"best[height<={max_h}]/best"
+            )
+        return f"best[height<={max_h}][ext=mp4]/best[height<={max_h}]/best"
 
     def _map_info_to_media(self, info_dict: Dict[str, Any]) -> MediaInfo:
         """Map yt-dlp info_dict to our MediaInfo model."""

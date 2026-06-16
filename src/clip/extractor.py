@@ -12,11 +12,14 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import subprocess
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+
+from src.exceptions import FFmpegNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -88,9 +91,13 @@ class ClipExtractor:
             created_at=datetime.now(timezone.utc).isoformat(),
         )
 
+        output_path: str | None = None
+        temp_download: str | None = None
+
         try:
+            self._ensure_ffmpeg_available()
+
             source_path = request.source
-            temp_download = None
 
             if request.is_url:
                 source_path = self._download_source(
@@ -119,32 +126,81 @@ class ClipExtractor:
                 )
                 output_path = str(Path(self._output_dir) / filename)
 
-            cmd = self._build_ffmpeg_cmd(
-                source_path, output_path, request
-            )
+            mode = request.mode
+            proc_stderr = ""
+            clip_duration = self._clip_duration_seconds(request)
+            timeout = self._ffmpeg_timeout_seconds(clip_duration, mode)
 
-            logger.info(
-                "Extracting clip: %s to %s",
-                request.start_time,
-                request.end_time,
-            )
-            logger.debug("FFmpeg cmd: %s", " ".join(cmd))
+            for attempt in range(2):
+                if attempt == 1:
+                    # Remove corrupt partial from failed fast (stream-copy) attempt
+                    if os.path.exists(output_path):
+                        try:
+                            os.remove(output_path)
+                        except OSError:
+                            pass
 
-            proc = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=600,
-            )
+                cmd = self._build_ffmpeg_cmd(
+                    source_path, output_path, request, mode=mode
+                )
 
-            if proc.returncode != 0:
-                err_tail = (proc.stderr or "")[-500:]
-                raise RuntimeError(f"FFmpeg failed: {err_tail}")
+                logger.info(
+                    "Extracting clip (%s): %s to %s (timeout=%ss)",
+                    mode,
+                    request.start_time,
+                    request.end_time,
+                    timeout,
+                )
+                logger.debug("FFmpeg cmd: %s", cmd)
 
-            if not os.path.exists(output_path):
-                raise RuntimeError("Output file was not created")
+                try:
+                    proc = subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=timeout,
+                    )
+                except subprocess.TimeoutExpired as exc:
+                    partial_err = ""
+                    if exc.stderr:
+                        partial_err = (
+                            exc.stderr.decode("utf-8", errors="replace")
+                            if isinstance(exc.stderr, bytes)
+                            else str(exc.stderr)
+                        )
+                    raise RuntimeError(
+                        f"FFmpeg timed out after {timeout}s while encoding a "
+                        f"{clip_duration:.0f}s clip. Try a shorter segment or "
+                        f"fast mode. {partial_err[-500:]}"
+                    ) from exc
+
+                proc_stderr = proc.stderr or ""
+
+                if proc.returncode != 0:
+                    err = proc_stderr.strip() or f"exit code {proc.returncode}"
+                    raise RuntimeError(
+                        f"FFmpeg failed ({mode}): {err[-2000:]}"
+                    )
+
+                if not os.path.exists(output_path):
+                    raise RuntimeError("Output file was not created")
+
+                if mode == "fast" and not self._is_output_playable(output_path):
+                    logger.warning(
+                        "Fast stream-copy clip is empty or unplayable; "
+                        "retrying with precise re-encode"
+                    )
+                    mode = "precise"
+                    timeout = self._ffmpeg_timeout_seconds(clip_duration, mode)
+                    continue
+                break
 
             file_size = os.path.getsize(output_path)
+            if not self._is_output_playable(output_path):
+                raise RuntimeError(
+                    "Clip output is not playable (missing moov atom or zero "
+                    f"duration). FFmpeg stderr: {proc_stderr.strip()[-1000:]}"
+                )
             duration = self._get_duration(output_path)
 
             result.output_path = output_path
@@ -164,39 +220,103 @@ class ClipExtractor:
                 except OSError:
                     pass
 
+        except FFmpegNotFoundError as e:
+            result.success = False
+            result.error = str(e)
+            logger.error("Clip extraction failed: %s", e)
         except Exception as e:
             result.success = False
             result.error = str(e)
             logger.error("Clip extraction failed: %s", e)
+            if output_path and os.path.exists(output_path):
+                try:
+                    os.remove(output_path)
+                except OSError:
+                    pass
+        finally:
+            if not result.success and temp_download and os.path.exists(temp_download):
+                logger.info("Keeping temp download for retry: %s", temp_download)
 
         return result
+
+    def _ensure_ffmpeg_available(self) -> None:
+        """Verify configured ffmpeg/ffprobe paths exist."""
+        for label, path in (("ffmpeg", self._ffmpeg), ("ffprobe", self._ffprobe)):
+            if not Path(path).is_file() and not shutil.which(path):
+                raise FFmpegNotFoundError(
+                    f"{label} not found at {path!r}. Install FFmpeg and set "
+                    "GID_FFMPEG_LOCATION or add ffmpeg to PATH."
+                )
+
+    @staticmethod
+    def _is_output_playable(file_path: str) -> bool:
+        """Return True if ffprobe can read a non-zero duration (moov atom present)."""
+        try:
+            if not os.path.isfile(file_path):
+                return False
+            if os.path.getsize(file_path) < 512:
+                return False
+            from src.env_loader import resolve_ffmpeg_binaries
+
+            _, ffprobe = resolve_ffmpeg_binaries()
+            cmd = [
+                ffprobe,
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                file_path,
+            ]
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=30
+            )
+            if result.returncode != 0:
+                return False
+            stderr = (result.stderr or "").lower()
+            if "moov atom not found" in stderr or "invalid data" in stderr:
+                return False
+            return float(result.stdout.strip()) > 0
+        except Exception:
+            return False
+
+    @staticmethod
+    def _clip_duration_seconds(request: ClipRequest) -> float:
+        start = ClipExtractor._timestamp_to_seconds(request.start_time)
+        end = ClipExtractor._timestamp_to_seconds(request.end_time)
+        return max(end - start, 0.0)
+
+    @staticmethod
+    def _ffmpeg_timeout_seconds(clip_duration: float, mode: str) -> int:
+        """Scale subprocess timeout with clip length (re-encode can be slow)."""
+        if mode == "fast":
+            return max(180, int(clip_duration) + 120)
+        # Precise re-encode: allow ~10x realtime + 5 min headroom (min 15 min)
+        return max(900, int(clip_duration * 10) + 300)
 
     def _build_ffmpeg_cmd(
         self,
         source: str,
         output: str,
         request: ClipRequest,
+        mode: str | None = None,
     ) -> list[str]:
         """Build FFmpeg command for clip extraction."""
+        use_mode = mode or request.mode
+        duration = self._calc_duration(request.start_time, request.end_time)
         cmd = [self._ffmpeg, "-y"]
 
-        if request.mode == "fast":
-            cmd.extend(["-ss", request.start_time])
-            cmd.extend(["-i", source])
-            cmd.extend(
-                [
-                    "-to",
-                    self._calc_duration(
-                        request.start_time, request.end_time
-                    ),
-                ]
-            )
+        # -ss before -i = fast input seek (critical for long videos)
+        cmd.extend(["-ss", request.start_time])
+        cmd.extend(["-i", source])
+        cmd.extend(["-t", duration])
+
+        if use_mode == "fast":
             cmd.extend(["-c", "copy"])
             cmd.extend(["-avoid_negative_ts", "make_zero"])
+            cmd.extend(["-reset_timestamps", "1"])
         else:
-            cmd.extend(["-i", source])
-            cmd.extend(["-ss", request.start_time])
-            cmd.extend(["-to", request.end_time])
             cmd.extend(
                 [
                     "-c:v",
@@ -211,8 +331,9 @@ class ClipExtractor:
                 cmd.extend(["-b:v", request.video_bitrate])
             if request.resolution:
                 cmd.extend(["-s", request.resolution])
+            if request.output_format == "mp4":
+                cmd.extend(["-movflags", "+faststart"])
 
-        cmd.extend(["-map", "0"])
         cmd.append(output)
 
         return cmd
@@ -369,22 +490,17 @@ _extractor: ClipExtractor | None = None
 def get_clip_extractor() -> ClipExtractor:
     """Return the global ClipExtractor instance, creating it if needed.
 
-    Uses same get_ffmpeg_location() as download (YouTube) so ffmpeg is found
-    the same way for both trimming and URL-download steps.
+    Uses resolve_ffmpeg_binaries() so discovery matches download (YouTube).
     """
     global _extractor
     if _extractor is None:
-        from src.env_loader import get_ffmpeg_location
-        ffdir = get_ffmpeg_location()
-        if ffdir:
-            p = Path(ffdir)
-            exe_suffix = ".exe" if os.name == "nt" else ""
-            _extractor = ClipExtractor(
-                ffmpeg_path=str(p / f"ffmpeg{exe_suffix}"),
-                ffprobe_path=str(p / f"ffprobe{exe_suffix}"),
-            )
-        else:
-            _extractor = ClipExtractor()
+        from src.env_loader import resolve_ffmpeg_binaries
+
+        ffmpeg_path, ffprobe_path = resolve_ffmpeg_binaries()
+        _extractor = ClipExtractor(
+            ffmpeg_path=ffmpeg_path,
+            ffprobe_path=ffprobe_path,
+        )
     return _extractor
 
 

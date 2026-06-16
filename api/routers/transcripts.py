@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -15,6 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.database.connection import get_session
 from api.database.models import TranscriptDB
 from api.dependencies import CurrentUser, get_app, get_current_user
+from src.exceptions import (
+    TranscriptBotDetectionError,
+    TranscriptError,
+    TranscriptNotAvailableError,
+    TranscriptRateLimitError,
+)
 from src.grabitdown import GrabItDown
 
 router = APIRouter(prefix="/transcripts", tags=["Transcripts"])
@@ -111,49 +116,19 @@ def _extract_transcript_sync(
     output_format: str,
     prefer_script: str | None = None,
 ) -> tuple[str, str]:
-    """Run yt-dlp to download subtitles and return (content, format). Blocks.
+    """Extract YouTube transcript via yt-dlp. Blocks."""
+    from src.config import get_settings
+    from src.transcript.youtube_captions import extract_youtube_transcript
 
-    prefer_script: "roman" = auto captions only (often Latin/Roman),
-                   "native" = manual subtitles only (often Devanagari/Urdu script),
-                   None/"default" = both (current behavior).
-    """
-    import yt_dlp
-
-    want_manual = prefer_script != "roman"
-    want_auto = prefer_script != "native"
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        out_tmpl = str(Path(tmpdir) / "%(id)s.%(ext)s")
-        ydl_opts = {
-            "quiet": True,
-            "no_warnings": True,
-            "skip_download": True,
-            "writesubtitles": want_manual,
-            "writeautomaticsub": want_auto,
-            "subtitleslangs": [language],
-            "subtitlesformat": output_format,
-            "outtmpl": {"default": out_tmpl},
-            # Reduce chance of YouTube 429: longer delays (helps Urdu/other-language subtitle endpoints)
-            "sleep_interval_requests": 3,
-            "sleep_interval_subtitles": 6,
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            all_subs = {}
-            if info:
-                all_subs.update(info.get("subtitles") or {})
-                all_subs.update(info.get("automatic_captions") or {})
-            if language not in all_subs:
-                available = list(all_subs.keys())[:10]
-                raise ValueError(
-                    f"Language '{language}' not available. Available: {', '.join(available) or 'none'}"
-                )
-            ydl.download([url])
-        # Find the written subtitle file (yt-dlp may use id or title in filename)
-        for path in Path(tmpdir).iterdir():
-            if path.suffix.lstrip(".") in (output_format, "srt", "vtt", "json3"):
-                return path.read_text(encoding="utf-8", errors="replace"), path.suffix.lstrip(".")
-    raise ValueError("Subtitle file was not written")
+    settings = get_settings()
+    cookies = settings.providers.youtube.cookies_file
+    return extract_youtube_transcript(
+        url=url,
+        language=language,
+        output_format=output_format,
+        prefer_script=prefer_script,
+        cookies_file=cookies,
+    )
 
 
 @router.post(
@@ -170,6 +145,11 @@ async def extract_transcript(
     if prefer_script not in ("default", "roman", "native"):
         prefer_script = "default"
 
+    from src.transcript.romanize import is_indic_roman_language
+
+    if prefer_script == "default" and is_indic_roman_language(body.language):
+        prefer_script = "roman"
+
     try:
         content, fmt = await asyncio.to_thread(
             _extract_transcript_sync,
@@ -178,6 +158,21 @@ async def extract_transcript(
             body.format,
             prefer_script if prefer_script != "default" else None,
         )
+    except TranscriptNotAvailableError as e:
+        logger.warning("Transcript extract 404: %s", e)
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except TranscriptRateLimitError as e:
+        logger.warning("Transcript extract 429: %s", e)
+        raise HTTPException(
+            status_code=429,
+            detail=str(e) or "YouTube rate limit. Try again in 3 minutes.",
+        ) from e
+    except TranscriptBotDetectionError as e:
+        logger.warning("Transcript extract 403: %s", e)
+        raise HTTPException(status_code=403, detail=str(e)) from e
+    except TranscriptError as e:
+        logger.warning("Transcript extract 400: %s", e)
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:

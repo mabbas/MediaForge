@@ -43,6 +43,18 @@ class TranscriptError(GrabItDownError):
     """Raised when transcript extraction fails."""
 
 
+class TranscriptNotAvailableError(TranscriptError):
+    """Raised when a video has no captions for the requested language."""
+
+
+class TranscriptBotDetectionError(TranscriptError):
+    """Raised when YouTube blocks the request (often datacenter IP / bot check)."""
+
+
+class TranscriptRateLimitError(TranscriptError):
+    """Raised when YouTube returns HTTP 429 (too many subtitle requests)."""
+
+
 class FeatureDisabledError(GrabItDownError):
     """Raised when accessing a disabled feature."""
 
@@ -68,6 +80,10 @@ class LimitExceededError(GrabItDownError):
 
 class ConfigurationError(GrabItDownError):
     """Raised for configuration-related errors."""
+
+
+class FFmpegNotFoundError(ConfigurationError):
+    """Raised when ffmpeg/ffprobe binaries cannot be located."""
 
 
 class NetworkError(GrabItDownError):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -58,7 +59,7 @@ class AppSettings(BaseModel):
 class DownloadSettings(BaseModel):
     """Download-related settings."""
 
-    output_directory: str = "./downloads"
+    output_directory: str = "~/Downloads"
     filename_template: str = "{provider}/{channel}/{title}.{ext}"
 
     @field_validator("output_directory", mode="before")
@@ -67,7 +68,7 @@ class DownloadSettings(BaseModel):
         """Expand ~ to user home so e.g. ~/Downloads becomes C:\\Users\\<user>\\Downloads."""
         if v and isinstance(v, str):
             return str(Path(v).expanduser())
-        return v or "./downloads"
+        return str(Path.home() / "Downloads")
     max_concurrent_downloads: int = 3
     absolute_max_concurrent: int = 5
     queue_max_size: int = 100
@@ -209,4 +210,27 @@ class AppConfig(BaseSettings):
 def get_settings() -> AppConfig:
     """Return the singleton AppConfig instance."""
     return AppConfig()
+
+
+def reset_settings_cache() -> None:
+    """Clear cached settings (call after changing GID_* env vars at runtime)."""
+    get_settings.cache_clear()
+
+
+def resolve_download_output_directory() -> Path:
+    """Resolve where downloads are saved.
+
+    Priority:
+      1. ``GID_DOWNLOAD__OUTPUT_DIRECTORY`` from the environment / ``.env``
+      2. User's Downloads folder (``~/Downloads``)
+    """
+    env_val = os.environ.get("GID_DOWNLOAD__OUTPUT_DIRECTORY", "").strip()
+    if env_val:
+        path = Path(env_val).expanduser()
+    else:
+        path = Path.home() / "Downloads"
+    path.mkdir(parents=True, exist_ok=True)
+    resolved = path.resolve()
+    os.environ["GID_DOWNLOAD__OUTPUT_DIRECTORY"] = str(resolved)
+    return resolved
 

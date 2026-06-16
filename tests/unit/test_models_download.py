@@ -93,6 +93,16 @@ def test_download_progress_eta_human() -> None:
     assert p.eta_human == "2m 30s"
 
 
+def test_download_progress_eta_coerces_float() -> None:
+    """yt-dlp reports fractional ETA seconds; model stores whole seconds."""
+    p = DownloadProgress(
+        job_id="test",
+        status=DownloadStatus.DOWNLOADING,
+        eta_seconds=137.79,
+    )
+    assert p.eta_seconds == 137
+
+
 def test_download_progress_eta_human_none() -> None:
     """None ETA → 'Unknown'."""
     p = DownloadProgress(job_id="test", status=DownloadStatus.DOWNLOADING)

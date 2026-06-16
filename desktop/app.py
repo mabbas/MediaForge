@@ -78,7 +78,6 @@ class GrabItDownDesktop:
     def _setup_directories(self) -> None:
         data_dir = Path(self.settings.data_dir)
         data_dir.mkdir(parents=True, exist_ok=True)
-        (data_dir / "downloads").mkdir(exist_ok=True)
         (data_dir / "data").mkdir(exist_ok=True)
 
     def _register_dashboard_route(self) -> None:
@@ -138,6 +137,12 @@ class GrabItDownDesktop:
         db_path = Path(self.settings.data_dir) / "data" / "grabitdown.db"
         db_url = f"sqlite+aiosqlite:///{db_path}"
         os.environ["GID_API_DATABASE_URL"] = db_url
+
+        from src.config import reset_settings_cache, resolve_download_output_directory
+
+        download_dir = resolve_download_output_directory()
+        logger.info("Download folder: %s", download_dir)
+        reset_settings_cache()
 
         # Register /dashboard route so fallback browser opens the UI (not /docs)
         self._register_dashboard_route()

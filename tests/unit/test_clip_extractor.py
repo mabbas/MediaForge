@@ -14,19 +14,36 @@ from src.clip.extractor import (
     get_clip_extractor,
     reset_clip_extractor,
 )
+from src.exceptions import FFmpegNotFoundError
 
 
 @pytest.fixture
-def extractor(tmp_path):
-    return ClipExtractor(output_dir=str(tmp_path))
+def ffmpeg_paths():
+    try:
+        from src.env_loader import resolve_ffmpeg_binaries
+
+        return resolve_ffmpeg_binaries()
+    except FFmpegNotFoundError:
+        pytest.skip("ffmpeg not found — set GID_FFMPEG_LOCATION or PATH")
 
 
 @pytest.fixture
-def sample_video(tmp_path):
+def extractor(tmp_path, ffmpeg_paths):
+    ffmpeg, ffprobe = ffmpeg_paths
+    return ClipExtractor(
+        ffmpeg_path=ffmpeg,
+        ffprobe_path=ffprobe,
+        output_dir=str(tmp_path),
+    )
+
+
+@pytest.fixture
+def sample_video(tmp_path, ffmpeg_paths):
     """Create a 10-second test video using FFmpeg."""
+    ffmpeg, _ = ffmpeg_paths
     video_path = str(tmp_path / "test_video.mp4")
     cmd = [
-        "ffmpeg", "-y",
+        ffmpeg, "-y",
         "-f", "lavfi", "-i", "testsrc=duration=10:size=320x240:rate=30",
         "-f", "lavfi", "-i", "sine=frequency=440:duration=10",
         "-c:v", "libx264", "-preset", "ultrafast",
@@ -35,7 +52,7 @@ def sample_video(tmp_path):
     ]
     result = subprocess.run(cmd, capture_output=True, timeout=30)
     if result.returncode != 0:
-        pytest.skip("FFmpeg not available or failed")
+        pytest.skip(f"FFmpeg failed to create sample video: {result.stderr[-200:]}")
     return video_path
 
 
@@ -145,7 +162,39 @@ def test_extract_invalid_times(extractor, sample_video):
     assert result.success is False
 
 
-def test_singleton():
+def test_extract_fast_playable(extractor, sample_video, ffmpeg_paths):
+    """Fast stream-copy clip must produce a non-empty, playable file."""
+    _, ffprobe = ffmpeg_paths
+    req = ClipRequest(source=sample_video, start_time="1", end_time="8", mode="fast")
+    result = extractor.extract(req)
+    assert result.success is True, result.error
+    assert os.path.exists(result.output_path)
+    assert result.file_size_bytes > 512
+    assert result.duration_seconds > 0
+    probe = subprocess.run(
+        [ffprobe, "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", result.output_path],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert probe.returncode == 0
+    assert float(probe.stdout.strip()) > 0
+
+
+def test_extract_ffmpeg_not_found_message(tmp_path):
+    ext = ClipExtractor(
+        ffmpeg_path=str(tmp_path / "missing_ffmpeg.exe"),
+        ffprobe_path=str(tmp_path / "missing_ffprobe.exe"),
+        output_dir=str(tmp_path),
+    )
+    req = ClipRequest(source=str(tmp_path / "nope.mp4"), start_time="0", end_time="1")
+    result = ext.extract(req)
+    assert result.success is False
+    assert "ffmpeg not found" in (result.error or "").lower()
+
+
+def test_singleton(ffmpeg_paths):
     reset_clip_extractor()
     e1 = get_clip_extractor()
     e2 = get_clip_extractor()
@@ -166,9 +215,13 @@ def test_ffmpeg_cmd_precise(extractor):
     )
     cmd = extractor._build_ffmpeg_cmd("/test.mp4", "/out.mp4", req)
     assert "-ss" in cmd
-    assert "-to" in cmd
+    assert "-t" in cmd
     assert "libx264" in cmd
     assert "copy" not in cmd
+    ss_idx = cmd.index("-ss")
+    i_idx = cmd.index("-i")
+    assert ss_idx < i_idx
+    assert "+faststart" in cmd
 
 
 def test_ffmpeg_cmd_fast(extractor):
@@ -177,6 +230,15 @@ def test_ffmpeg_cmd_fast(extractor):
     )
     cmd = extractor._build_ffmpeg_cmd("/test.mp4", "/out.mp4", req)
     assert "copy" in cmd
+    assert "-t" in cmd
     ss_idx = cmd.index("-ss")
     i_idx = cmd.index("-i")
     assert ss_idx < i_idx
+
+
+def test_ffmpeg_timeout_scales_for_long_clip(extractor):
+    req = ClipRequest(source="/test.mp4", start_time="00:24:00", end_time="00:42:00")
+    dur = extractor._clip_duration_seconds(req)
+    assert dur == 18 * 60
+    timeout = extractor._ffmpeg_timeout_seconds(dur, "precise")
+    assert timeout >= 900

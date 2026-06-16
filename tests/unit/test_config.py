@@ -1,6 +1,10 @@
 """Tests for application configuration loading."""
 
-from src.config import get_settings
+from pathlib import Path
+
+import pytest
+
+from src.config import get_settings, resolve_download_output_directory, reset_settings_cache
 
 
 def test_load_default_config() -> None:
@@ -63,6 +67,35 @@ def test_provider_settings_defaults() -> None:
     assert settings.providers.youtube.enabled is True
     assert settings.providers.facebook.enabled is False
     assert settings.providers.generic.enabled is True
+
+
+def test_download_output_directory_default_is_user_downloads() -> None:
+    """default.yaml uses ~/Downloads."""
+    settings = get_settings()
+    expected = str(Path.home() / "Downloads")
+    assert settings.download.output_directory == expected
+
+
+def test_resolve_download_output_directory_env_override(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """GID_DOWNLOAD__OUTPUT_DIRECTORY in env wins over ~/Downloads."""
+    custom = tmp_path / "my-videos"
+    monkeypatch.setenv("GID_DOWNLOAD__OUTPUT_DIRECTORY", str(custom))
+    reset_settings_cache()
+    resolved = resolve_download_output_directory()
+    assert resolved == custom.resolve()
+    assert custom.is_dir()
+
+
+def test_resolve_download_output_directory_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without env override, downloads go to ~/Downloads."""
+    monkeypatch.delenv("GID_DOWNLOAD__OUTPUT_DIRECTORY", raising=False)
+    reset_settings_cache()
+    resolved = resolve_download_output_directory()
+    assert resolved == (Path.home() / "Downloads").resolve()
 
 
 def test_config_singleton() -> None:

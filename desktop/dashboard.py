@@ -362,6 +362,12 @@ def get_dashboard_html(api_base: str) -> str:
                     onclick="resumeQueue()">Resume</button>
         </div>
 
+        <div id="downloads-folder-bar" style="display:flex;align-items:center;gap:8px;margin-bottom:16px;padding:10px 14px;background:#1a1a2e;border:1px solid #2a2a3e;border-radius:8px;font-size:12px;color:#888;">
+            <span>📁 Saves to:</span>
+            <code id="downloads-folder-path" style="flex:1;color:#aaa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">…</code>
+            <button type="button" class="btn btn-outline btn-sm" onclick="openDownloadsFolder()">Open folder</button>
+        </div>
+
         <div class="stats-grid" id="stats-grid">
             <div class="stat-card">
                 <div class="value" id="stat-active">0</div>
@@ -534,7 +540,13 @@ def get_dashboard_html(api_base: str) -> str:
         }};
         if (body) opts.body = JSON.stringify(body);
         const r = await fetch(API + path, opts);
-        return r.json();
+        let data = {{}};
+        try {{ data = await r.json(); }} catch (_) {{}}
+        if (!r.ok) {{
+            const msg = data.detail || data.message || data.error || ('HTTP ' + r.status);
+            throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+        }}
+        return data;
     }}
 
     function isPlaylistUrl(url) {{
@@ -550,9 +562,7 @@ def get_dashboard_html(api_base: str) -> str:
         const priority = document.getElementById('priority-select').value;
 
         if (mode === 'transcript') {{
-            window.open(window.location.origin + '/transcripts?url=' + encodeURIComponent(url), '_blank');
-            document.getElementById('url-input').value = '';
-            toast('Transcript page opened', 'info');
+            window.location.href = window.location.origin + '/transcripts?url=' + encodeURIComponent(url);
             return;
         }}
 
@@ -991,6 +1001,9 @@ def get_dashboard_html(api_base: str) -> str:
             const eta = j.eta_human || '';
             const meta = [j.media_type, j.quality, speed, eta]
                 .filter(Boolean).join(' • ');
+            const errLine = (j.status === 'failed' && j.error_message)
+                ? '<div class="job-meta" style="color:#f87171;margin-top:4px;">' +
+                  j.error_message + '</div>' : '';
 
             let actions = '';
             if (j.status === 'cancelled' || j.status === 'completed') {{
@@ -1024,6 +1037,7 @@ def get_dashboard_html(api_base: str) -> str:
                 '<div class="job-info">' +
                     '<div class="job-title">' + title + '</div>' +
                     '<div class="job-meta">' + meta + '</div>' +
+                    errLine +
                 '</div>' +
                 '<div class="job-progress">' +
                     '<div class="progress-bar"><div class="progress-fill" ' +
@@ -1035,6 +1049,33 @@ def get_dashboard_html(api_base: str) -> str:
                 actions +
                 '</div>';
         }}).join('');
+    }}
+
+    async function openDownloadsFolder() {{
+        try {{
+            const config = await api('GET', '/config');
+            const dir = config.download && config.download.output_directory;
+            if (!dir) {{
+                toast('Download folder not configured', 'error');
+                return;
+            }}
+            if (window.pywebview && window.pywebview.api && window.pywebview.api.open_folder) {{
+                window.pywebview.api.open_folder(dir);
+            }} else {{
+                toast('Files saved to: ' + dir, 'info');
+            }}
+        }} catch (e) {{
+            toast('Could not open downloads folder', 'error');
+        }}
+    }}
+
+    async function loadDownloadsFolder() {{
+        try {{
+            const config = await api('GET', '/config');
+            const dir = config.download && config.download.output_directory;
+            const el = document.getElementById('downloads-folder-path');
+            if (el && dir) el.textContent = dir;
+        }} catch (e) {{}}
     }}
 
     async function refreshStats() {{
@@ -1109,6 +1150,7 @@ def get_dashboard_html(api_base: str) -> str:
     connectWS();
     refreshStats();
     refreshJobs();
+    loadDownloadsFolder();
     setInterval(refreshStats, 10000);
     setInterval(refreshJobs, 15000);
     </script>
@@ -1241,15 +1283,15 @@ def get_transcripts_html(api_base: str) -> str:
                 <option value="fr">French</option>
                 <option value="de">German</option>
             </select>
-            <p style="font-size:12px;color:#888;margin-top:6px;">Click “Detect languages”, then pick Urdu/Hindi or English.</p>
+            <p style="font-size:12px;color:#888;margin-top:6px;">Hindi/Urdu default to Roman (Latin) script. Use the script option below for Devanagari/Urdu script.</p>
             <button type="button" class="btn btn-outline" id="detect-btn">Detect languages</button>
         </div>
         <div class="section" id="script-section" style="display:none;">
             <div class="section-title">Hindi/Urdu script</div>
             <select id="script-select">
-                <option value="default">Default (try both)</option>
-                <option value="roman">Roman / Latin (e.g. Roman Hindi, Roman Urdu)</option>
-                <option value="native">Native script (Devanagari for Hindi, Urdu script)</option>
+                <option value="roman" selected>Roman / Latin (Roman Hindi, Roman Urdu)</option>
+                <option value="native">Native script (Devanagari / Urdu script)</option>
+                <option value="default">Auto (same as Roman for Hindi/Urdu)</option>
             </select>
         </div>
         <div class="section">
@@ -1289,6 +1331,7 @@ def get_transcripts_html(api_base: str) -> str:
     var rateLimitCooldownActive = false;
     var rateLimitIntervalId = null;
     var extractingInProgress = false;
+    var detectedLanguages = null;
 
     function startRateLimitCountdown(seconds) {{
         rateLimitCooldownActive = true;
@@ -1312,18 +1355,19 @@ def get_transcripts_html(api_base: str) -> str:
         }}, 1000);
     }}
 
+    function isIndicRomanLanguage(lang) {{
+        if (!lang) return false;
+        var base = lang.split('-')[0].toLowerCase();
+        return base === 'hi' || base === 'ur';
+    }}
+
     function updateScriptVisibility() {{
         var lang = langSelect.value;
-        scriptSection.style.display = (lang === 'hi' || lang === 'ur' || lang === 'hi-IN' || lang === 'ur-PK') ? 'block' : 'none';
+        var show = isIndicRomanLanguage(lang);
+        scriptSection.style.display = show ? 'block' : 'none';
+        if (show && scriptSelect) scriptSelect.value = 'roman';
     }}
     langSelect.addEventListener('change', updateScriptVisibility);
-
-    (function initFromQuery() {{
-        const params = new URLSearchParams(window.location.search);
-        const u = params.get('url');
-        if (u) urlInput.value = decodeURIComponent(u);
-        updateScriptVisibility();
-    }})();
 
     function toast(msg, type) {{
         const container = document.getElementById('toasts');
@@ -1334,9 +1378,12 @@ def get_transcripts_html(api_base: str) -> str:
         setTimeout(function() {{ el.remove(); }}, 4000);
     }}
 
-    detectBtn.addEventListener('click', async function() {{
+    async function detectLanguages(silent) {{
         const url = urlInput.value.trim();
-        if (!url) {{ toast('Enter a video URL first', 'error'); return; }}
+        if (!url) {{
+            if (!silent) toast('Enter a video URL first', 'error');
+            return false;
+        }}
         const origText = detectBtn.textContent;
         detectBtn.disabled = true;
         detectBtn.textContent = 'Detecting…';
@@ -1345,10 +1392,11 @@ def get_transcripts_html(api_base: str) -> str:
             let data;
             try {{ data = await r.json(); }} catch (_) {{ data = {{}}; }}
             if (!r.ok) {{
-                toast(data.detail || 'Request failed (' + r.status + ')', 'error');
-                return;
+                if (!silent) toast(data.detail || 'Request failed (' + r.status + ')', 'error');
+                return false;
             }}
             var langs = data.languages && typeof data.languages === 'object' ? data.languages : null;
+            detectedLanguages = langs;
             if (langs && Object.keys(langs).length > 0) {{
                 var preferred = ['hi','ur','en','hi-IN','ur-PK','en-US','en-GB','ar','es','pt','fr','de'];
                 var codes = Object.keys(langs);
@@ -1370,29 +1418,57 @@ def get_transcripts_html(api_base: str) -> str:
                     opt.textContent = label + (formats.indexOf('vtt') >= 0 ? ' (vtt)' : formats[0] ? ' (' + formats[0] + ')' : '');
                     langSelect.appendChild(opt);
                 }});
-                toast('Languages detected: ' + ordered.length, 'success');
+                if (!silent) toast('Languages detected: ' + ordered.length, 'success');
                 updateScriptVisibility();
-            }} else {{
-                toast('No subtitle languages found for this URL', 'error');
+                return true;
             }}
+            detectedLanguages = null;
+            if (!silent) {{
+                toast('No subtitles on this video — try another URL or enable captions on YouTube', 'error');
+            }}
+            return false;
         }} catch (e) {{
-            toast('Could not detect languages: ' + (e.message || 'Network error'), 'error');
+            if (!silent) toast('Could not detect languages: ' + (e.message || 'Network error'), 'error');
+            return false;
         }} finally {{
             detectBtn.disabled = false;
             detectBtn.textContent = origText;
         }}
-    }});
+    }}
+
+    detectBtn.addEventListener('click', function() {{ detectLanguages(false); }});
+
+    (function initFromQuery() {{
+        const params = new URLSearchParams(window.location.search);
+        const u = params.get('url');
+        if (u) {{
+            urlInput.value = decodeURIComponent(u);
+            updateScriptVisibility();
+            detectLanguages(true);
+        }}
+    }})();
 
     var lastExtract = {{ content: '', format: 'srt' }};
     downloadBtn.addEventListener('click', async function() {{
         if (extractingInProgress) return;
         const url = urlInput.value.trim();
         if (!url) {{ toast('Enter a video URL first', 'error'); return; }}
+        if (!detectedLanguages || Object.keys(detectedLanguages).length === 0) {{
+            const ok = await detectLanguages(false);
+            if (!ok) return;
+        }}
+        const lang = langSelect.value;
+        if (!detectedLanguages[lang]) {{
+            toast('Language not available for this video. Detect languages again.', 'error');
+            return;
+        }}
         extractingInProgress = true;
         downloadBtn.disabled = true;
-        const lang = langSelect.value;
         var scriptVal = 'default';
-        if (scriptSection.style.display !== 'none' && scriptSelect) scriptVal = scriptSelect.value || 'default';
+        if (isIndicRomanLanguage(lang)) {{
+            scriptVal = (scriptSection.style.display !== 'none' && scriptSelect)
+                ? (scriptSelect.value || 'roman') : 'roman';
+        }}
         resultSection.style.display = 'none';
         extractProgressText.textContent = 'Extracting transcript…';
         extractProgress.classList.add('visible');
@@ -1402,9 +1478,18 @@ def get_transcripts_html(api_base: str) -> str:
                 headers: {{ 'Content-Type': 'application/json' }},
                 body: JSON.stringify({{ url: url, language: lang, format: 'srt', script: scriptVal }})
             }});
-            const data = await r.json();
+            let data;
+            try {{ data = await r.json(); }} catch (_) {{ data = {{ detail: 'Invalid server response (' + r.status + ')' }}; }}
             if (!r.ok) {{
                 var msg = data.detail || 'Extract failed';
+                if (typeof msg !== 'string') msg = JSON.stringify(msg);
+                if (r.status === 404) {{
+                    if (msg.toLowerCase().indexOf('no transcript') >= 0 ||
+                        msg.toLowerCase().indexOf('no captions') >= 0 ||
+                        msg.toLowerCase().indexOf('not written') >= 0) {{
+                        msg = 'This video has no captions/transcript on YouTube.';
+                    }}
+                }}
                 if (r.status === 429) {{
                     toast(msg, 'error');
                     startRateLimitCountdown(180);

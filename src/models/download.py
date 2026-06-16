@@ -102,6 +102,16 @@ class DownloadProgress(BaseModel):
     elapsed_seconds: float = 0.0
     current_file: str | None = None
 
+    @field_validator("eta_seconds", mode="before")
+    @classmethod
+    def _coerce_eta_seconds(cls, value: object) -> int | None:
+        """yt-dlp reports ETA as a float; store whole seconds."""
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return int(value)
+        return value  # type: ignore[return-value]
+
     @property
     def speed_human(self) -> str:
         """Human-readable representation of download speed."""
