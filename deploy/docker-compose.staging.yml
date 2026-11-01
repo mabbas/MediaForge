@@ -35,6 +35,8 @@ services:
       BACKEND_INTERNAL_URL: http://api:8000/api/v1
       NEXT_PUBLIC_API_URL: http://api:8000/api/v1
       CSRF_SECRET_KEY: ${CSRF_SECRET_KEY:?CSRF secret key is required}
+      ADMIN_CSRF_SECRET: ${CSRF_SECRET_KEY:?CSRF secret key is required}
+      JWT_SECRET_KEY: ${GID_JWT_SECRET_KEY:?JWT secret key is required}
       AUTH_SECRET_KEY: ${GID_JWT_SECRET_KEY:?JWT secret key is required}
       AUTH_INTERNAL_SECRET: ${GID_JWT_SECRET_KEY:?JWT secret key is required}
       ALLOWED_ORIGINS: ${STAGING_ALLOWED_ORIGINS:-https://staging.mediaforge.local:8443,https://localhost:8443,https://127.0.0.1:8443,https://staging.mediaforge.local,http://localhost:3000,http://127.0.0.1:3000}
