@@ -29,9 +29,21 @@ def test_health(client: TestClient):
 
 
 def test_health_disk(client: TestClient):
-    r = client.get("/api/v1/health/disk")
-    assert r.status_code == 200
-    assert "free_gb" in r.json()
+    # Anonymous request must fail closed with 401
+    r_unauth = client.get("/api/v1/health/disk")
+    assert r_unauth.status_code == 401
+
+    # Authenticated principal receives 200
+    from api.dependencies import CurrentUser, get_current_user
+    from api.main import app
+
+    app.dependency_overrides[get_current_user] = lambda: CurrentUser()
+    try:
+        r = client.get("/api/v1/health/disk")
+        assert r.status_code == 200
+        assert "free_gb" in r.json()
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
 
 
 def test_root_redirect(client: TestClient):

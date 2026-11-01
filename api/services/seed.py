@@ -53,3 +53,34 @@ async def seed_defaults(session: AsyncSession) -> None:
 
     await session.commit()
     logger.info("Database seeding complete")
+
+
+async def run_seed(database_url: str | None = None) -> None:
+    """Explicitly seed default tenant and user.
+
+    Never invoked automatically on application startup.
+    Idempotent: safe to run multiple times.
+    """
+    import api.database.connection as db_conn
+    from api.config import get_api_settings
+
+    settings = get_api_settings()
+    url = database_url or settings.database_url
+
+    # Initialize connection without creating tables or migrating
+    await db_conn.init_database(database_url=url, validate_revision=False)
+    if db_conn.async_session_factory is None:
+        raise RuntimeError("Failed to initialize database session factory for seeding.")
+
+    async with db_conn.async_session_factory() as session:
+        await seed_defaults(session)
+
+    await db_conn.close_database()
+    logger.info("Explicit seeding execution completed successfully.")
+
+
+if __name__ == "__main__":
+    import asyncio
+
+    logging.basicConfig(level=logging.INFO)
+    asyncio.run(run_seed())

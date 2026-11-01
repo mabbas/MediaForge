@@ -23,6 +23,22 @@ def grabitdown_exception_handler(
     )
 
 
+def ssrf_security_exception_handler(
+    request: Request, exc: Exception
+) -> JSONResponse:
+    """Handle SSRF validation exceptions with HTTP 400."""
+    logger.warning("SSRF security policy blocked request: %s", exc)
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content={
+            "success": False,
+            "error": str(exc),
+            "error_code": "SSRF_SECURITY_ERROR",
+        },
+    )
+
+
+
 def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Handle unexpected exceptions."""
     logger.exception("Unhandled exception: %s", exc)

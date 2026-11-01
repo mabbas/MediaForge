@@ -1,0 +1,204 @@
+name: mediaforge
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-55432}:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-grabitdown}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Database superuser password required}
+      GID_DB_USER: ${GID_DB_USER:-gid_user}
+      GID_DB_PASSWORD: ${GID_DB_PASSWORD:?Application database password required}
+      GID_DB_SCHEMA: ${GID_DB_SCHEMA:-gid}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - mediaforge_pgdata:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-grabitdown}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+    networks:
+      - mediaforge_net
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-26379}:6379"
+    volumes:
+      - mediaforge_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    networks:
+      - mediaforge_net
+
+  mailpit:
+    image: axllent/mailpit:v1.24
+    container_name: mailpit
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${MAILPIT_SMTP_PORT:-51025}:1025"
+      - "127.0.0.1:${MAILPIT_WEB_PORT:-58025}:8025"
+    environment:
+      MP_DATA_DIR: /data
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+    volumes:
+      - mediaforge_mailpit_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:8025/api/v1/info || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    networks:
+      - mediaforge_net
+
+  pgadmin:
+    image: dpage/pgadmin4:8.14
+    container_name: pgadmin
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${PGADMIN_PORT:-58080}:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@mediaforge.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:?pgAdmin admin password required}
+      PGADMIN_LISTEN_PORT: 80
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    volumes:
+      - mediaforge_pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:80/misc/ping')\" || wget -O - -q http://127.0.0.1:80/misc/ping || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    networks:
+      - mediaforge_net
+
+  api:
+    profiles: ["api"]
+    build:
+      context: ..
+      dockerfile: deploy/api/Dockerfile
+    image: mediaforge-api:dev
+    container_name: mediaforge-api
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${API_PORT:-58000}:8000"
+    environment:
+      GID_API_DATABASE_URL: ${GID_APP_DOCKER_DATABASE_URL:-postgresql+asyncpg://${GID_APP_USER:-gid_app}:${GID_APP_PASSWORD}@postgres:5432/grabitdown}
+      GID_API_HOST: "0.0.0.0"
+      GID_API_PORT: 8000
+      GID_JWT_SECRET_KEY: ${GID_JWT_SECRET_KEY:-}
+      GID_DOWNLOAD__OUTPUT_DIRECTORY: "/app/downloads"
+      REDIS_HOST: "redis"
+      REDIS_PORT: 6379
+      SMTP_HOST: "mailpit"
+      SMTP_PORT: 1025
+    volumes:
+      - mediaforge_api_data:/app/data
+      - mediaforge_api_downloads:/app/downloads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+    networks:
+      - mediaforge_net
+
+  worker:
+    profiles: ["workers"]
+    image: mediaforge-api:dev
+    container_name: mediaforge-worker
+    restart: unless-stopped
+    command: ["python", "-m", "api.workers.media_worker"]
+    environment:
+      GID_API_DATABASE_URL: ${GID_APP_DOCKER_DATABASE_URL:-postgresql+asyncpg://${GID_APP_USER:-gid_app}:${GID_APP_PASSWORD}@postgres:5432/grabitdown}
+      GID_DOWNLOAD__OUTPUT_DIRECTORY: "/app/downloads"
+      REDIS_HOST: "redis"
+      REDIS_PORT: 6379
+      SMTP_HOST: "mailpit"
+      SMTP_PORT: 1025
+    volumes:
+      - mediaforge_api_data:/app/data
+      - mediaforge_api_downloads:/app/downloads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import os, time; assert time.time() - os.path.getmtime('/tmp/worker_heartbeat') < 60\""]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+    networks:
+      - mediaforge_net
+
+networks:
+  mediaforge_net:
+    name: mediaforge_net
+    driver: bridge
+
+volumes:
+  mediaforge_pgdata:
+    name: mediaforge_pgdata
+  mediaforge_redis_data:
+    name: mediaforge_redis_data
+  mediaforge_mailpit_data:
+    name: mediaforge_mailpit_data
+  mediaforge_pgadmin_data:
+    name: mediaforge_pgadmin_data
+  mediaforge_api_data:
+    name: mediaforge_api_data
+  mediaforge_api_downloads:
+    name: mediaforge_api_downloads

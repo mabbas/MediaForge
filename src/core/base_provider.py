@@ -75,10 +75,16 @@ class BaseMediaProvider(ABC):
         """Validate URL format and optionally check against supported domains.
 
         Returns True if:
-        - URL starts with http:// or https://
+        - URL satisfies SSRF safety policy (scheme, credentials, host, IP)
         - If supported_domains is non-empty, URL domain matches one of them
-        - If supported_domains is empty, any valid HTTP URL passes
+        - If supported_domains is empty, any valid safe HTTP URL passes
         """
+        try:
+            from api.security.url_policy import validate_url as ssrf_validate_url
+            ssrf_validate_url(url, resolve_dns=False)
+        except Exception:
+            return False
+
         try:
             parsed = urlparse(url)
             if parsed.scheme not in ("http", "https"):
@@ -101,6 +107,7 @@ class BaseMediaProvider(ABC):
             return any(domain.endswith(f".{d}") for d in clean_domains)
         except Exception:
             return False
+
 
     def sanitize_filename(self, title: str) -> str:
         """Remove invalid filesystem characters and limit filename length.

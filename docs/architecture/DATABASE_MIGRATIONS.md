@@ -1,0 +1,237 @@
+# MediaForge Database Migration & PostgreSQL Architecture
+
+## 1. Executive Summary & Core Philosophy
+
+MediaForge (GrabItDown) is designed as an enterprise-grade modular monolith with PostgreSQL as the authoritative backend database, supporting an Electron desktop client, a commercial developer API, and future multi-tenant capabilities.
+
+To guarantee robust isolation, auditability, and zero cross-system contamination:
+1. **Dedicated Schema Isolation**: All application domain tables, indexes, constraints, sequences, and version tracking reside strictly in the dedicated `gid` schema. The default PostgreSQL `public` schema contains zero application tables.
+2. **Authoritative Migration Engine**: Database migrations are managed exclusively by **Alembic**. Runtime schema creation (such as `Base.metadata.create_all`) is explicitly deprecated in production and slated for replacement in STEP 01-B.
+3. **Strict Naming Conventions**: Consistent database-level constraint naming prevents collisions and enables deterministic automated migrations across PostgreSQL and SQLite test environments.
+4. **Dual-Environment Test Compatibility**: SQLAlchemy models use runtime schema translation maps to support both PostgreSQL (with explicit schema `gid`) and SQLite in-memory databases for fast, deterministic unit testing.
+
+---
+
+## 2. SQLAlchemy 2.x Declarative Architecture
+
+### 2.1 Explicit Schema & Constraint Naming Conventions
+
+All models inherit from `Base` defined in `api/database/connection.py`. The metadata is configured with explicit schema declaration and standard naming conventions:
+
+```python
+NAMING_CONVENTION = {
+    "ix": "ix_%(column_0_label)s",
+    "uq": "uq_%(table_name)s_%(column_0_name)s",
+    "ck": "ck_%(table_name)s_%(constraint_name)s",
+    "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+    "pk": "pk_%(table_name)s",
+}
+
+class Base(DeclarativeBase):
+    """SQLAlchemy declarative base with naming convention and explicit gid schema."""
+    metadata = MetaData(schema="gid", naming_convention=NAMING_CONVENTION)
+```
+
+### 2.2 Domain Models
+
+The initial baseline schema defines seven core tables under schema `gid`:
+- `gid.tenants`: Multi-tenant organization boundaries, slugs, tiers, and configuration.
+- `gid.users`: User identity, tenant mapping, role permissions, and authentication provider.
+- `gid.api_keys`: Developer and client API access tokens with scoping and revocation status.
+- `gid.download_jobs`: Core download engine work items, status state-machine, and file references.
+- `gid.transcripts`: Video and audio transcript caches, language metadata, and text payloads.
+- `gid.usage_tracking`: Per-tenant and per-user quota consumption, bandwidth, and duration tracking.
+- `gid.app_settings`: Global application key-value configuration overrides.
+- `gid.media_artifacts`: Persistent database identity, ownership, duration, checksums, and lifecycle for extracted clips and merged videos (STEP 02-E1).
+
+### 2.3 SQLite Test Compatibility
+
+Because SQLite does not support PostgreSQL-style namespaces/schemas without attaching separate database files, `init_database()` dynamically applies an engine-level translation map when connecting to SQLite:
+
+```python
+if is_sqlite:
+    engine_kwargs["poolclass"] = NullPool
+    engine_kwargs["execution_options"] = {"schema_translate_map": {"gid": None}}
+```
+
+This guarantees that SQLite unit tests execute against default tables without schema errors while production models remain strictly bound to `gid`.
+
+---
+
+## 3. Alembic Migration Engine Configuration
+
+### 3.1 Migration Environment (`api/database/migrations/env.py`)
+
+Alembic is configured to enforce schema boundaries and support safe testing workflows:
+
+1. **Schema Version Table Isolation**:
+   ```python
+   context.configure(
+       ...,
+       version_table_schema="gid",
+       include_schemas=True,
+       include_object=include_object,
+   )
+   ```
+   The migration version tracking table resides at `gid.alembic_version`.
+
+2. **Strict Object Filtering**:
+   ```python
+   def include_object(object, name, type_, reflected, compare_to):
+       """Ensure Alembic only operates on tables in the gid schema."""
+       if type_ == "table":
+           return object.schema == "gid"
+       return True
+   ```
+   Alembic completely ignores the PostgreSQL `public` schema and any external extensions or tables.
+
+3. **Dynamic Database Override (`-x dbname=...` and `-x url=...`)**:
+   `env.py` supports dynamic `-x` arguments, allowing developers and CI/CD pipelines to run migrations against ephemeral test databases without modifying `.env` or application configuration:
+   ```powershell
+   python -m alembic -x dbname=grabitdown_migration_test upgrade head
+   ```
+
+---
+
+## 4. Migration Execution & Verification Workflow
+
+### 4.1 Creating a New Migration Revision
+
+1. Make the necessary changes to SQLAlchemy models in `api/database/models.py`.
+2. Generate an autogenerated migration revision:
+   ```powershell
+   python -m alembic revision --autogenerate -m "describe_changes"
+   ```
+3. Inspect the generated revision in `api/database/migrations/versions/<id>_<desc>.py`.
+4. Ensure all operations explicitly reference `schema='gid'`.
+
+### 4.2 Verifying Against a Disposable Test Database
+
+Never apply untested migrations directly to the authoritative development or production database. Always verify in an isolated ephemeral database first:
+
+```powershell
+# 1. Create temporary disposable database
+docker compose -f deploy/docker-compose.yml exec -T postgres createdb -U postgres grabitdown_test_tmp
+
+# 2. Initialize schema and permissions
+@"
+CREATE SCHEMA IF NOT EXISTS gid AUTHORIZATION gid_user;
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+GRANT ALL ON SCHEMA gid TO gid_user;
+GRANT CONNECT ON DATABASE grabitdown_test_tmp TO gid_user;
+"@ | docker compose -f deploy/docker-compose.yml exec -T postgres psql -U postgres -d grabitdown_test_tmp
+
+# 3. Test migration upgrade
+python -m alembic -x dbname=grabitdown_test_tmp upgrade head
+
+# 4. Verify zero schema drift
+python -m alembic -x dbname=grabitdown_test_tmp check
+
+# 5. Test downgrade to base
+python -m alembic -x dbname=grabitdown_test_tmp downgrade base
+
+# 6. Test re-upgrade to head
+python -m alembic -x dbname=grabitdown_test_tmp upgrade head
+
+# 7. Clean up disposable database
+docker compose -f deploy/docker-compose.yml exec -T postgres dropdb -U postgres grabitdown_test_tmp
+```
+
+### 4.3 Applying to Authoritative Development Database
+
+Once verified in isolation:
+1. Create a pre-migration backup:
+   ```powershell
+   powershell.exe -ExecutionPolicy Bypass -File deploy/scripts/Backup-Postgres.ps1
+   ```
+2. Apply migrations:
+   ```powershell
+   python -m alembic upgrade head
+   ```
+3. Verify schema state:
+   ```powershell
+   python -m alembic check
+   ```
+
+---
+
+## 5. Database Role & Privilege Security Model
+
+### 5.1 Proposed Least-Privilege Architecture
+
+In accordance with enterprise defense-in-depth security principles, database operations must be segregated into two distinct roles:
+
+| Role Name | Category | Scope / Permissions | Usage |
+|---|---|---|---|
+| `gid_migrator` | Administrative / DDL | Schema owner of `gid`. Full `CREATE`, `ALTER`, `DROP`, `TRUNCATE` privileges on all objects in `gid`. | CI/CD pipelines, Alembic migration runners. Never used by running web server. |
+| `gid_app` | Runtime / DML | `CONNECT` to database, `USAGE` on schema `gid`, `SELECT`, `INSERT`, `UPDATE`, `DELETE` on tables in `gid`, `USAGE` on sequences. **Zero DDL privileges**. | FastAPI application runtime, background workers. |
+
+### 5.2 Implementation Script (Proposed for STEP 01-B)
+
+```sql
+-- Create least-privilege runtime role
+CREATE ROLE gid_app WITH LOGIN PASSWORD 'strong_runtime_password';
+GRANT CONNECT ON DATABASE grabitdown TO gid_app;
+GRANT USAGE ON SCHEMA gid TO gid_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA gid TO gid_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA gid GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO gid_app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA gid TO gid_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA gid GRANT USAGE, SELECT ON SEQUENCES TO gid_app;
+REVOKE CREATE ON SCHEMA gid FROM gid_app;
+```
+
+### 5.3 Reason for Deferral to STEP 01-B
+
+In the current codebase, `api/main.py` invokes `await init_database()` on startup, which executes:
+```python
+async with engine.begin() as conn:
+    await conn.run_sync(Base.metadata.create_all)
+```
+If DDL privileges were immediately revoked from the runtime user (`gid_user`), the FastAPI application would fail during startup. Therefore, role separation is marked **BLOCKED FOR APPROVAL** and will be implemented in STEP 01-B alongside removing `create_all` from application startup.
+
+---
+
+## 6. Disaster Recovery & Backup Procedures
+
+### 6.1 Backup Utility (`deploy/scripts/Backup-Postgres.ps1`)
+
+The backup script connects to the PostgreSQL container and exports a compressed custom-format archive (`pg_dump -Fc`):
+- Directory: `deploy/backups/`
+- Filename format: `grabitdown_backup_<timestamp>.dump`
+- Header verification: The script automatically verifies that the output starts with the PostgreSQL custom archive binary signature (`PGDMP`).
+
+To run a backup:
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File deploy/scripts/Backup-Postgres.ps1
+```
+
+### 6.2 Restoration Utility (`deploy/scripts/Restore-Postgres.ps1`)
+
+The restore utility supports restoring backups into the primary database or an isolated target database (e.g., `grabitdown_restore_check`) for audit and verification purposes:
+- Automatically terminates active backend connections before restore (`pg_terminate_backend`).
+- Validates the backup file existence and `PGDMP` header before proceeding.
+- Uses native `createdb` and `pg_restore` commands inside the container.
+
+To verify a backup in an isolated database:
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File deploy/scripts/Restore-Postgres.ps1 -BackupFile deploy/backups/grabitdown_backup_<timestamp>.dump -TargetDatabase grabitdown_restore_check
+```
+
+---
+
+## 7. Development Infrastructure Security Review (Mailpit)
+
+In `deploy/docker-compose.yml`, Mailpit is configured with:
+```yaml
+environment:
+  MP_DATA_DIR: /data
+  MP_SMTP_AUTH_ACCEPT_ANY: 1
+  MP_SMTP_AUTH_ALLOW_INSECURE: 1
+```
+
+**Security Analysis**:
+- `MP_SMTP_AUTH_ALLOW_INSECURE=1` permits SMTP clients to authenticate without TLS (`STARTTLS`).
+- In local development, developers test email delivery using simulated credentials without managing local SSL/TLS certificate authorities.
+- The Mailpit SMTP port (`51025`) and Web UI port (`58025`) are strictly bound to `127.0.0.1` (loopback only) on the host machine.
+- **Production Boundary**: Mailpit is strictly a local development and testing mock server. Production environments use production-grade email service providers (e.g. AWS SES, SendGrid, Postmark) configured with mandatory TLS enforcement.

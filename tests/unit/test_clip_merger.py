@@ -30,11 +30,10 @@ def ffmpeg_paths():
 
 
 @pytest.fixture
-def merger(tmp_path, ffmpeg_paths):
-    ffmpeg, ffprobe = ffmpeg_paths
+def merger(tmp_path):
     return ClipMerger(
-        ffmpeg_path=ffmpeg,
-        ffprobe_path=ffprobe,
+        ffmpeg_path="ffmpeg",
+        ffprobe_path="ffprobe",
         output_dir=str(tmp_path),
     )
 

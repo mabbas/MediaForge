@@ -23,8 +23,13 @@ dependencies = [
   "fastapi>=0.115.0",
   # Database
   "sqlalchemy[asyncio]>=2.0",
+  "alembic>=1.13.0",
   "asyncpg>=0.29.0",
   "aiosqlite>=0.20.0",
+  # Auth & Security & Rate Limiting
+  "argon2-cffi>=23.1.0",
+  "pyjwt[crypto]>=2.8.0",
+  "redis>=5.0.0",
   # Config
   "python-dotenv>=1.0.0",
 ]
@@ -38,6 +43,7 @@ desktop = [
 dev = [
   "pytest>=8.0",
   "pytest-asyncio>=0.23",
+  "httpx>=0.27.0",
   "ruff>=0.3.0",
   "mypy>=1.8",
 ]
@@ -54,5 +60,5 @@ testpaths = ["tests"]
 addopts = "-v"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src"]
+packages = ["src", "api"]
 

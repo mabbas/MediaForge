@@ -1,0 +1,72 @@
+{
+  "name": "mediaforge-desktop",
+  "version": "0.1.0",
+  "description": "MediaForge Desktop Electron Application",
+  "author": "MediaForge Engineering",
+  "main": "dist/electron/main.js",
+  "scripts": {
+    "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && tsc -p tsconfig.electron.json && electron dist/electron/main.js\"",
+    "dev:renderer": "vite",
+    "build:electron": "tsc -p tsconfig.electron.json",
+    "build:renderer": "vite build",
+    "build": "npm run build:electron && npm run build:renderer",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit",
+    "start": "electron dist/electron/main.js"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.454.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tailwind-merge": "^2.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.8.1",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.3",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^9.0.1",
+    "electron": "^44.10.0",
+    "electron-builder": "^26.18.0",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.14",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10",
+    "wait-on": "^8.0.1"
+  },
+  "build": {
+    "appId": "com.mediaforge.desktop",
+    "productName": "MediaForge",
+    "copyright": "Copyright © 2026 MediaForge Engineering",
+    "directories": {
+      "output": "release"
+    },
+    "afterPack": "scripts/apply-fuses.js",
+    "asar": true,
+    "files": [
+      "dist/**/*",
+      "!dist/tests/**/*"
+    ],
+    "extraResources": [],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "perMachine": false
+    }
+  }
+}

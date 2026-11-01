@@ -8,6 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database.connection import get_session
+from api.dependencies import CurrentUser, get_current_user
 from api.schemas.common import (
     DiskUsageResponse,
     HealthResponse,
@@ -127,7 +128,9 @@ async def readiness(
     summary="Disk usage",
     description="Disk usage for download directory.",
 )
-async def disk_usage():
+async def disk_usage(
+    user: CurrentUser = Depends(get_current_user),
+):
     from src.config import get_settings
     from src.download.disk_monitor import DiskMonitor
 
@@ -161,7 +164,9 @@ async def disk_usage():
     summary="Network status",
     description="Check network connectivity.",
 )
-async def network_status():
+async def network_status(
+    user: CurrentUser = Depends(get_current_user),
+):
     """Check network status."""
     from src.resume.network_monitor import NetworkMonitor
 

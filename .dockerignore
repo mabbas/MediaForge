@@ -1,0 +1,53 @@
+# Version control
+.git
+.gitignore
+.github
+
+# Environment and sensitive credential files
+.env
+.env.*
+deploy/.env
+deploy/.env.*
+*.dump
+
+# Database backups and init scripts
+deploy/backups/
+deploy/snapshots/
+*.zip
+deploy/postgres/
+backups/
+
+# Web build and dependencies
+web/.next/
+web/node_modules/
+
+# Python cache and bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Testing and linting caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+tests/
+
+# Documentation and design artifacts
+docs/
+
+# Distribution and packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Desktop frontend
+desktop/
+
+# OS metadata
+.DS_Store
+Thumbs.db

@@ -13,7 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database.connection import get_session
 from api.database.models import TranscriptDB
-from api.dependencies import CurrentUser, get_app, get_current_user
+from api.dependencies import CurrentUser, get_app, get_current_user, require_scope
+from api.security.url_policy import validate_url
 from src.exceptions import (
     TranscriptBotDetectionError,
     TranscriptError,
@@ -21,6 +22,7 @@ from src.exceptions import (
     TranscriptRateLimitError,
 )
 from src.grabitdown import GrabItDown
+
 
 router = APIRouter(prefix="/transcripts", tags=["Transcripts"])
 logger = logging.getLogger(__name__)
@@ -46,15 +48,14 @@ async def list_transcripts(
     page_size: int = Query(20, ge=1, le=100),
     language: str | None = Query(None),
     session: AsyncSession = Depends(get_session),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(require_scope("transcripts:read")),
 ):
     """List saved transcripts."""
     query = select(TranscriptDB)
     count_query = select(func.count(TranscriptDB.id))
 
-    if user.tenant_id != "default":
-        query = query.where(TranscriptDB.tenant_id == user.tenant_id)
-        count_query = count_query.where(TranscriptDB.tenant_id == user.tenant_id)
+    query = query.where(TranscriptDB.tenant_id == user.tenant_id)
+    count_query = count_query.where(TranscriptDB.tenant_id == user.tenant_id)
     if language:
         query = query.where(TranscriptDB.language == language)
         count_query = count_query.where(TranscriptDB.language == language)
@@ -99,9 +100,10 @@ async def list_transcripts(
 async def list_transcript_languages(
     url: str = Query(..., description="Video URL"),
     app: GrabItDown = Depends(get_app),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(require_scope("transcripts:read")),
 ):
     """Return available languages and formats (e.g. { \"en\": [\"srt\", \"vtt\"] })."""
+    validate_url(url)
     try:
         info = await asyncio.to_thread(app.get_info, url)
     except Exception as e:
@@ -138,10 +140,12 @@ def _extract_transcript_sync(
 )
 async def extract_transcript(
     body: ExtractTranscriptRequest,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(require_scope("transcripts:write")),
 ):
     """Extract transcript via yt-dlp and return content. On 429 we return immediately; client shows countdown."""
+    validate_url(body.url)
     prefer_script = (body.script or "default").strip().lower() or "default"
+
     if prefer_script not in ("default", "roman", "native"):
         prefer_script = "default"
 
@@ -184,6 +188,27 @@ async def extract_transcript(
                 detail="YouTube rate limit. Try again in 3 minutes.",
             ) from e
         raise HTTPException(status_code=500, detail=f"Extract failed: {err_msg}") from e
+    # Record commercial subtitle retrieval usage (STEP 02-E2B-Fix-A)
+    # Subtitle downloads are categorized as subtitle_retrieval, not expensive AI speech-to-text
+    from api.services.usage_service import record_subtitle_usage
+    try:
+        tr_id = f"tr_{abs(hash(body.url + body.language)) % 10000000000000000}"
+        words = len(content.split()) if content else 0
+        b_count = len(content.encode("utf-8")) if content else 0
+        await record_subtitle_usage(
+            tenant_id=user.tenant_id,
+            transcript_id=tr_id,
+            word_count=words,
+            bytes_count=b_count,
+            user_id=user.user_id,
+            api_key_id=user.api_key_id,
+            auth_method=user.auth_method.value if hasattr(user.auth_method, "value") else str(user.auth_method),
+            language=body.language,
+            format=fmt,
+        )
+    except Exception as exc:
+        logger.warning("Could not record subtitle retrieval usage: %s", exc)
+
     return {
         "success": True,
         "url": body.url,
@@ -201,19 +226,12 @@ async def extract_transcript(
 async def get_transcript(
     transcript_id: str,
     session: AsyncSession = Depends(get_session),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(require_scope("transcripts:read")),
 ):
     """Get a saved transcript."""
     transcript = await session.get(TranscriptDB, transcript_id)
 
-    if not transcript:
-        raise HTTPException(status_code=404, detail="Transcript not found")
-
-    if (
-        transcript.tenant_id
-        and transcript.tenant_id != user.tenant_id
-        and user.tenant_id != "default"
-    ):
+    if not transcript or transcript.tenant_id != user.tenant_id:
         raise HTTPException(status_code=404, detail="Transcript not found")
 
     return {

@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' http://127.0.0.1:58000 mediaforge-media:; media-src 'self' mediaforge-media: blob:; img-src 'self' data: mediaforge-media:; font-src 'self' data:;"
+    />
+    <title>MediaForge Desktop</title>
+  </head>
+  <body class="bg-slate-50 text-slate-900 antialiased h-screen overflow-hidden select-none">
+    <div id="root" class="h-full w-full"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

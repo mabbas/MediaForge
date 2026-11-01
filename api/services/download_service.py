@@ -16,11 +16,14 @@ async def get_job_from_db(
     session: AsyncSession,
     job_id: str,
     tenant_id: str | None = None,
+    user_id: str | None = None,
 ) -> DownloadJobDB | None:
-    """Get a download job by id, optionally scoped by tenant."""
+    """Get a download job by id, strictly scoped by tenant and optional user."""
     query = select(DownloadJobDB).where(DownloadJobDB.id == job_id)
-    if tenant_id and tenant_id != "default":
+    if tenant_id is not None:
         query = query.where(DownloadJobDB.tenant_id == tenant_id)
+    if user_id is not None:
+        query = query.where(DownloadJobDB.user_id == user_id)
     result = await session.execute(query)
     return result.scalars().one_or_none()
 
@@ -101,6 +104,12 @@ async def persist_job(
         file_size_bytes = getattr(job.result, "file_size_bytes", None)
         title = getattr(job.result, "title", None)
 
+    db_user_id = user_id
+    metadata_json = {}
+    if user_id and (user_id.startswith("service:") or user_id.startswith("api_key:")):
+        db_user_id = None
+        metadata_json = {"service_account": user_id}
+
     db_job = DownloadJobDB(
         id=job.job_id,
         url=url,
@@ -117,8 +126,9 @@ async def persist_job(
         eta_seconds=job.progress.eta_seconds if job.progress else None,
         bytes_downloaded=job.progress.bytes_downloaded if job.progress else 0,
         total_bytes=job.progress.total_bytes if job.progress else None,
-        user_id=user_id,
+        user_id=db_user_id,
         tenant_id=tenant_id,
+        metadata_json=metadata_json,
     )
     session.add(db_job)
     return db_job

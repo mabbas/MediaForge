@@ -28,11 +28,10 @@ def ffmpeg_paths():
 
 
 @pytest.fixture
-def extractor(tmp_path, ffmpeg_paths):
-    ffmpeg, ffprobe = ffmpeg_paths
+def extractor(tmp_path):
     return ClipExtractor(
-        ffmpeg_path=ffmpeg,
-        ffprobe_path=ffprobe,
+        ffmpeg_path="ffmpeg",
+        ffprobe_path="ffprobe",
         output_dir=str(tmp_path),
     )
 

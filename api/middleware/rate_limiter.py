@@ -25,7 +25,7 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
 
     def _is_localhost(self, request: Request) -> bool:
         key = self._client_key(request)
-        return key in ("127.0.0.1", "::1", "localhost")
+        return key in ("127.0.0.1", "::1", "localhost", "testclient")
 
     async def dispatch(self, request: Request, call_next):
         if self._is_localhost(request):

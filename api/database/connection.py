@@ -31,9 +31,9 @@ NAMING_CONVENTION = {
 
 
 class Base(DeclarativeBase):
-    """SQLAlchemy declarative base with naming convention."""
+    """SQLAlchemy declarative base with naming convention and explicit gid schema."""
 
-    metadata = MetaData(naming_convention=NAMING_CONVENTION)
+    metadata = MetaData(schema="gid", naming_convention=NAMING_CONVENTION)
 
 
 engine: AsyncEngine | None = None
@@ -46,12 +46,16 @@ async def init_database(
     pool_size: int = 10,
     max_overflow: int = 20,
     echo: bool = False,
+    validate_revision: bool = True,
 ) -> None:
-    """Initialize database engine and create tables.
+    """Initialize database engine and session factory.
 
     Supports both PostgreSQL and SQLite URLs.
-    PostgreSQL uses connection pooling.
-    SQLite uses NullPool (for testing).
+    PostgreSQL uses connection pooling and validates Alembic revision.
+    SQLite uses NullPool and schema_translate_map (for testing).
+
+    NOTE: Automatic table creation (Base.metadata.create_all) is strictly disabled
+    in normal startup to enforce migration-managed database lifecycles.
     """
     global engine, async_session_factory
 
@@ -65,6 +69,7 @@ async def init_database(
         from sqlalchemy.pool import NullPool
 
         engine_kwargs["poolclass"] = NullPool
+        engine_kwargs["execution_options"] = {"schema_translate_map": {"gid": None}}
     else:
         engine_kwargs.update(
             {
@@ -83,18 +88,29 @@ async def init_database(
         expire_on_commit=False,
     )
 
-    # Import models so they are registered on Base.metadata before create_all
+    # Import models so they are registered on Base.metadata
     from api.database import models  # noqa: F401
 
-    # Create all tables in the default schema for both PostgreSQL and SQLite.
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    # Validate Alembic revision for PostgreSQL databases (read-only)
+    if not is_sqlite and validate_revision:
+        from api.database.validator import validate_database_revision
+
+        await validate_database_revision(engine=engine, schema=schema)
 
     db_type = "SQLite" if is_sqlite else "PostgreSQL"
     display_url = (
         database_url.split("@")[-1] if "@" in database_url else database_url
     )
     logger.info(f"Database initialized ({db_type}): {display_url}")
+
+
+async def create_schema_tables(target_engine: AsyncEngine | None = None) -> None:
+    """Explicit test/dev helper to create tables without Alembic. Never called by API startup."""
+    eng = target_engine or engine
+    if eng is None:
+        raise RuntimeError("Database engine not initialized. Call init_database first.")
+    async with eng.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 
 
 async def close_database() -> None:
@@ -106,9 +122,15 @@ async def close_database() -> None:
         logger.info("Database connections closed")
 
 
+def get_session_factory() -> async_sessionmaker[AsyncSession] | None:
+    """Return the global async_sessionmaker instance."""
+    return async_session_factory
+
+
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     """FastAPI dependency: get async database session."""
-    if async_session_factory is None:
+    factory = get_session_factory()
+    if factory is None:
         raise RuntimeError(
             "Database not initialized. Call init_database() first."
         )

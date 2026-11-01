@@ -27,10 +27,17 @@ from api.dependencies import shutdown_app
 from api.middleware.error_handler import (
     generic_exception_handler,
     grabitdown_exception_handler,
+    ssrf_security_exception_handler,
 )
 from api.middleware.rate_limiter import RateLimiterMiddleware
 from api.middleware.request_logger import RequestLoggerMiddleware
+from api.security.url_policy import SSRFSecurityError, install_yt_dlp_egress_guard
+
 from api.routers import (
+    admin_plans,
+    api_keys,
+    artifacts,
+    auth,
     clips,
     clips_merge,
     config,
@@ -38,6 +45,7 @@ from api.routers import (
     features,
     health,
     history,
+    jobs,
     providers,
     queue,
     resolve,
@@ -47,7 +55,6 @@ from api.routers import (
 )
 from api.services.engine_sync import get_engine_sync, reset_engine_sync
 from api.services.progress_bridge import get_progress_bridge, reset_progress_bridge
-from api.services.seed import seed_defaults
 from src import __app_name__, __version__
 from src.exceptions import GrabItDownError
 
@@ -60,23 +67,25 @@ async def lifespan(app: FastAPI):
 
     logger.info(f"{__app_name__} API v{__version__} starting...")
 
-    await init_database(
-        database_url=settings.database_url,
-        schema=settings.database_schema,
-        pool_size=settings.database_pool_size,
-        max_overflow=settings.database_max_overflow,
-        echo=settings.database_echo,
-    )
+    # Install SSRF connection and redirect egress protections
+    install_yt_dlp_egress_guard()
 
-    # Seed defaults (unless disabled for testing)
-    from api.database.connection import async_session_factory
+    try:
 
-    if async_session_factory and not settings.skip_seed:
-        async with async_session_factory() as session:
-            await seed_defaults(session)
+        await init_database(
+            database_url=settings.database_url,
+            schema=settings.database_schema,
+            pool_size=settings.database_pool_size,
+            max_overflow=settings.database_max_overflow,
+            echo=settings.database_echo,
+        )
+    except Exception as exc:
+        logger.critical(f"Database startup failed: {exc}")
+        raise
 
-    # Start progress bridge and DB sync (DB sync must use main loop for asyncpg)
+    # Start progress bridge and DB sync (DB sync and WS bridge use main loop)
     bridge = get_progress_bridge()
+    bridge.set_main_loop(asyncio.get_running_loop())
     bridge.start()
     db_sync = get_engine_sync()
     db_sync.set_main_loop(asyncio.get_running_loop())
@@ -116,10 +125,9 @@ app = FastAPI(
         "- Transcript extraction\n"
         "- Resumable downloads\n"
         "- Multi-tenant architecture\n"
-        "- Feature flags & tier-based access\n"
         "\n## Authentication\n"
-        "Currently running in **personal mode** — "
-        "all endpoints accessible without auth.\n"
+        "Deny-by-default Bearer token authentication boundary.\n"
+        "Anonymous or unverified requests to protected endpoints return HTTP 401 Unauthorized.\n"
     ),
     version=__version__,
     docs_url="/docs",
@@ -158,10 +166,15 @@ app.add_middleware(
     burst=settings.rate_limit_burst,
 )
 
+app.add_exception_handler(SSRFSecurityError, ssrf_security_exception_handler)
 app.add_exception_handler(GrabItDownError, grabitdown_exception_handler)
 app.add_exception_handler(Exception, generic_exception_handler)
 
+
 app.include_router(health.router, prefix=settings.api_prefix)
+app.include_router(admin_plans.router, prefix=settings.api_prefix)
+app.include_router(auth.router, prefix=settings.api_prefix)
+app.include_router(api_keys.router, prefix=settings.api_prefix)
 app.include_router(features.router, prefix=settings.api_prefix)
 app.include_router(usage.router, prefix=settings.api_prefix)
 app.include_router(history.router, prefix=settings.api_prefix)
@@ -173,6 +186,8 @@ app.include_router(resolve.router, prefix=settings.api_prefix)
 app.include_router(transcripts.router, prefix=settings.api_prefix)
 app.include_router(clips_merge.router, prefix=settings.api_prefix)
 app.include_router(clips.router, prefix=settings.api_prefix)
+app.include_router(artifacts.router, prefix=settings.api_prefix)
+app.include_router(jobs.router, prefix=settings.api_prefix)
 app.include_router(ws.router, prefix=settings.api_prefix)
 
 

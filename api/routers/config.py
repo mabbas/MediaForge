@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
-from api.dependencies import CurrentUser, get_current_user, get_app
+from api.dependencies import AuthMethod, CurrentUser, get_current_user, get_app
 from api.schemas.config import (
     ConfigResponse,
     ConfigUpdateRequest,
@@ -29,6 +29,11 @@ async def get_config(
     user: CurrentUser = Depends(get_current_user),
 ):
     """Get current configuration."""
+    if user.auth_method == AuthMethod.API_KEY:
+        raise HTTPException(
+            status_code=403,
+            detail="API keys are strictly forbidden from performing system-level operations.",
+        )
     settings = get_settings()
     return ConfigResponse(
         app={
@@ -82,7 +87,12 @@ async def update_config(
     app: GrabItDown = Depends(get_app),
     user: CurrentUser = Depends(get_current_user),
 ):
-    """Update runtime configuration."""
+    """Update runtime configuration (system admin only)."""
+    if not user.is_system_admin:
+        raise HTTPException(
+            status_code=403,
+            detail="Admin privileges required",
+        )
     changes = {}
     if request.max_concurrent_downloads is not None:
         app._engine.set_max_concurrent(request.max_concurrent_downloads)

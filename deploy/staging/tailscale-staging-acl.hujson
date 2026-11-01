@@ -1,0 +1,112 @@
+// ==============================================================================
+// MediaForge Staging Environment — Tailscale Access Control Policy (HuJSON)
+// Milestone: STEP 04-B2-C-Fix-A (TASK 2)
+//
+// Security Design:
+// 1. Zero 'reject' actions (Tailscale default-denies all unmatched traffic).
+// 2. Clear human operator identity modeling via groups (group:staging-admins).
+// 3. Clear server identity modeling via tags (tag:vps-staging, tag:ci-cd).
+// 4. Strict separation between Administrative HTTPS (8443) and SSH (22).
+// 5. Database (5432) and Redis (6379) are NEVER exposed to the tailnet.
+// 6. Tailscale Funnel is explicitly disabled to prevent public ingress.
+// 7. Includes built-in Tailscale positive and negative policy tests.
+// ==============================================================================
+{
+  // 1. Human Operator Identity Modeling
+  "groups": {
+    "group:staging-admins": [
+      "staging-admin-1@example.com",
+      "staging-admin-2@example.com"
+    ],
+    "group:staging-auditors": [
+      "auditor-1@example.com"
+    ]
+  },
+
+  // 2. Tag Ownership Definitions
+  "tagOwners": {
+    "tag:vps-staging": ["group:staging-admins"],
+    "tag:ci-cd": ["group:staging-admins"]
+  },
+
+  // 3. Network Access Control Lists (Default Deny)
+  "acls": [
+    // Rule A: Staging administrators can access Super Admin HTTPS (Port 8443)
+    {
+      "action": "accept",
+      "src": ["group:staging-admins"],
+      "dst": ["tag:vps-staging:8443"]
+    },
+
+    // Rule B: Staging auditors have read-only HTTPS telemetry access (Port 8443)
+    {
+      "action": "accept",
+      "src": ["group:staging-auditors"],
+      "dst": ["tag:vps-staging:8443"]
+    },
+
+    // Rule C: CI/CD deployment runner has deployment port access (Port 22 SSH only)
+    {
+      "action": "accept",
+      "src": ["tag:ci-cd"],
+      "dst": ["tag:vps-staging:22"]
+    }
+  ],
+
+  // 4. Tailscale SSH Access Controls (Separated from generic ACLs)
+  "ssh": [
+    {
+      "action": "check",
+      "src": ["group:staging-admins"],
+      "dst": ["tag:vps-staging"],
+      "users": ["ubuntu", "staging-operator"]
+    }
+  ],
+
+  // 5. Node Attribute Policy: Strictly Deny Tailscale Funnel on Staging Host
+  "nodeAttrs": [
+    {
+      "target": ["tag:vps-staging"],
+      "attr": [] // Explicitly omitting "funnel" attribute denies public Internet ingress
+    }
+  ],
+
+  // 6. Automated Policy Acceptance Tests (Positive & Negative Assertions)
+  "tests": [
+    // Test 1: Staging admin can access HTTPS 8443, but NOT database or cache ports
+    {
+      "src": "staging-admin-1@example.com",
+      "accept": ["tag:vps-staging:8443"],
+      "deny": [
+        "tag:vps-staging:5432", // PostgreSQL
+        "tag:vps-staging:55433", // Staging PostgreSQL host port
+        "tag:vps-staging:6379", // Redis
+        "tag:vps-staging:26380", // Staging Redis host port
+        "tag:vps-staging:8000", // Core API internal port
+        "tag:vps-staging:3000"  // Web internal port
+      ]
+    },
+
+    // Test 2: CI/CD runner can access SSH (22) for deployment, but NOT HTTPS (8443) or DB
+    {
+      "src": "tag:ci-cd",
+      "accept": ["tag:vps-staging:22"],
+      "deny": [
+        "tag:vps-staging:8443",
+        "tag:vps-staging:5432",
+        "tag:vps-staging:6379"
+      ]
+    },
+
+    // Test 3: Unauthorized corporate user is denied access to ALL staging resources
+    {
+      "src": "regular-employee@example.com",
+      "deny": [
+        "tag:vps-staging:8443",
+        "tag:vps-staging:22",
+        "tag:vps-staging:5432",
+        "tag:vps-staging:6379"
+      ]
+    }
+  ]
+}

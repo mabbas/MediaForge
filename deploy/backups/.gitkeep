@@ -1,0 +1,1 @@
+# Preserves deploy/backups directory in git while ignoring dump files.

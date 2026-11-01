@@ -13,7 +13,9 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import signal
 import subprocess
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -22,6 +24,30 @@ from pathlib import Path
 from src.exceptions import FFmpegNotFoundError
 
 logger = logging.getLogger(__name__)
+
+
+def _terminate_process_group(proc: subprocess.Popen) -> None:
+    """Terminate process group gracefully with SIGTERM, then escalate to SIGKILL."""
+    if proc.poll() is not None:
+        return
+    try:
+        if os.name != "nt" and hasattr(os, "killpg"):
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        else:
+            proc.terminate()
+    except (OSError, ProcessLookupError):
+        pass
+
+    try:
+        proc.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        try:
+            if os.name != "nt" and hasattr(os, "killpg"):
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            else:
+                proc.kill()
+        except (OSError, ProcessLookupError):
+            pass
 
 
 @dataclass
@@ -41,6 +67,8 @@ class ClipRequest:
     resolution: str | None = None  # e.g. "1280x720"
     clip_id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
     is_url: bool = False
+    is_cancelled: Any = None
+    on_proc_started: Any = None
 
 
 @dataclass
@@ -153,28 +181,38 @@ class ClipExtractor:
                 )
                 logger.debug("FFmpeg cmd: %s", cmd)
 
-                try:
-                    proc = subprocess.run(
-                        cmd,
-                        capture_output=True,
-                        text=True,
-                        timeout=timeout,
-                    )
-                except subprocess.TimeoutExpired as exc:
-                    partial_err = ""
-                    if exc.stderr:
-                        partial_err = (
-                            exc.stderr.decode("utf-8", errors="replace")
-                            if isinstance(exc.stderr, bytes)
-                            else str(exc.stderr)
-                        )
-                    raise RuntimeError(
-                        f"FFmpeg timed out after {timeout}s while encoding a "
-                        f"{clip_duration:.0f}s clip. Try a shorter segment or "
-                        f"fast mode. {partial_err[-500:]}"
-                    ) from exc
+                start_new_session = (os.name != "nt")
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    start_new_session=start_new_session,
+                )
 
-                proc_stderr = proc.stderr or ""
+                if callable(getattr(request, "on_proc_started", None)):
+                    try:
+                        request.on_proc_started(proc)
+                    except Exception:
+                        pass
+
+                start_t = time.time()
+                is_cancelled_fn = getattr(request, "is_cancelled", None)
+
+                while proc.poll() is None:
+                    if callable(is_cancelled_fn) and is_cancelled_fn():
+                        _terminate_process_group(proc)
+                        raise RuntimeError("Cancelled by user")
+                    if time.time() - start_t > timeout:
+                        _terminate_process_group(proc)
+                        raise RuntimeError(
+                            f"FFmpeg timed out after {timeout}s while encoding a "
+                            f"{clip_duration:.0f}s clip. Try a shorter segment or fast mode."
+                        )
+                    time.sleep(0.2)
+
+                proc_stdout, proc_stderr = proc.communicate()
+                proc_stderr = proc_stderr or ""
 
                 if proc.returncode != 0:
                     err = proc_stderr.strip() or f"exit code {proc.returncode}"
@@ -261,6 +299,8 @@ class ClipExtractor:
             _, ffprobe = resolve_ffmpeg_binaries()
             cmd = [
                 ffprobe,
+                "-protocol_whitelist",
+                "file,crypto,data",
                 "-v",
                 "error",
                 "-show_entries",
@@ -305,12 +345,19 @@ class ClipExtractor:
         """Build FFmpeg command for clip extraction."""
         use_mode = mode or request.mode
         duration = self._calc_duration(request.start_time, request.end_time)
-        cmd = [self._ffmpeg, "-y"]
+        cmd = [
+            self._ffmpeg,
+            "-y",
+            "-nostdin",
+            "-protocol_whitelist",
+            "file,crypto,data",
+        ]
 
         # -ss before -i = fast input seek (critical for long videos)
         cmd.extend(["-ss", request.start_time])
         cmd.extend(["-i", source])
         cmd.extend(["-t", duration])
+
 
         if use_mode == "fast":
             cmd.extend(["-c", "copy"])
@@ -392,10 +439,12 @@ class ClipExtractor:
         )
 
         ffmpeg_dir = self._resolve_ffmpeg_dir_for_ytdlp()
+        trusted_gateway = os.environ.get("MEDIAFORGE_TRUSTED_EGRESS_GATEWAY")
         ydl_opts = {
             "outtmpl": output_template,
             "quiet": True,
             "no_warnings": True,
+            "proxy": trusted_gateway,
         }
         if ffmpeg_dir:
             ydl_opts["ffmpeg_location"] = ffmpeg_dir
@@ -422,6 +471,8 @@ class ClipExtractor:
         try:
             cmd = [
                 self._ffprobe,
+                "-protocol_whitelist",
+                "file,crypto,data",
                 "-v",
                 "quiet",
                 "-show_entries",
@@ -451,8 +502,8 @@ class ClipExtractor:
         """Public method to get video duration."""
         return self._get_duration(file_path)
 
+    @staticmethod
     def validate_timestamps(
-        self,
         start: str,
         end: str,
         source_duration: float | None = None,
@@ -462,8 +513,8 @@ class ClipExtractor:
         Returns (is_valid, error_message).
         """
         try:
-            start_s = self._timestamp_to_seconds(start)
-            end_s = self._timestamp_to_seconds(end)
+            start_s = ClipExtractor._timestamp_to_seconds(start)
+            end_s = ClipExtractor._timestamp_to_seconds(end)
         except ValueError as e:
             return False, str(e)
 

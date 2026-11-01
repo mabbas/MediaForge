@@ -247,13 +247,41 @@ class DownloadEngine:
 
     # ── Job control ──────────────────────────────────────────────────────────
 
-    def cancel_job(self, job_id: str) -> bool:
-        """Cancel a queued, deferred, or active download."""
-        was_deferred = False
+    def _check_ownership(
+        self,
+        job: DownloadJob | None,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+    ) -> bool:
+        """Validate whether a job belongs to the specified tenant (and optional user)."""
+        if job is None:
+            return False
+        if tenant_id is not None and getattr(job, "tenant_id", None) != tenant_id:
+            return False
+        if user_id is not None and getattr(job, "user_id", None) != user_id:
+            return False
+        return True
+
+    def cancel_job(
+        self,
+        job_id: str,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+    ) -> bool:
+        """Cancel a queued, deferred, or active download with tenant isolation check."""
         with self._jobs_lock:
+            existing = self._jobs.get(job_id)
+            if existing and not self._check_ownership(existing, tenant_id, user_id):
+                return False
+
+            was_deferred = False
             if job_id in self._deferred:
+                deferred_job = self._deferred.get(job_id)
+                if not self._check_ownership(deferred_job, tenant_id, user_id):
+                    return False
                 self._deferred.pop(job_id, None)
                 was_deferred = True
+
         if was_deferred:
             self._update_job_status(job_id, DownloadStatus.CANCELLED)
             logger.info("Job %s cancelled (was deferred)", job_id[:8])
@@ -275,9 +303,17 @@ class DownloadEngine:
 
         return False
 
-    def start_job(self, job_id: str) -> bool:
+    def start_job(
+        self,
+        job_id: str,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+    ) -> bool:
         """Move a deferred job to the queue so it will be started. Returns True if job was deferred and is now queued."""
         with self._jobs_lock:
+            job = self._deferred.get(job_id)
+            if not self._check_ownership(job, tenant_id, user_id):
+                return False
             job = self._deferred.pop(job_id, None)
             if not job:
                 return False
@@ -287,9 +323,17 @@ class DownloadEngine:
         logger.info("Deferred job %s started (moved to queue)", job_id[:8])
         return True
 
-    def pause_job(self, job_id: str) -> bool:
+    def pause_job(
+        self,
+        job_id: str,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+    ) -> bool:
         """Pause a queued, deferred, or active download (sets status to PAUSED so it can be resumed). Returns True if the job was paused."""
         with self._jobs_lock:
+            job = self._jobs.get(job_id)
+            if not self._check_ownership(job, tenant_id, user_id):
+                return False
             if job_id in self._deferred:
                 self._deferred.pop(job_id, None)
                 self._update_job_status(job_id, DownloadStatus.PAUSED)
@@ -310,10 +354,17 @@ class DownloadEngine:
                 return True
         return False
 
-    def requeue_job(self, job_id: str) -> bool:
+    def requeue_job(
+        self,
+        job_id: str,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+    ) -> bool:
         """Re-queue a failed/paused/interrupted job so it runs again (same job_id). Returns True if the job was requeued."""
         with self._jobs_lock:
             job = self._jobs.get(job_id)
+            if not self._check_ownership(job, tenant_id, user_id):
+                return False
             if not job or not job.progress:
                 return False
             status = job.progress.status
@@ -330,11 +381,24 @@ class DownloadEngine:
         logger.info("Job %s requeued (was %s)", job_id[:8], status_val)
         return True
 
-    def start_all_deferred(self) -> int:
-        """Move all deferred jobs to the queue. Returns the number of jobs started."""
+    def start_all_deferred(
+        self,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+    ) -> int:
+        """Move deferred jobs to the queue. Scoped by tenant/user if provided."""
         with self._jobs_lock:
-            to_start = list(self._deferred.values())
-            self._deferred.clear()
+            if tenant_id is None and user_id is None:
+                to_start = list(self._deferred.values())
+                self._deferred.clear()
+            else:
+                to_start = [
+                    j for j in self._deferred.values()
+                    if self._check_ownership(j, tenant_id, user_id)
+                ]
+                for j in to_start:
+                    self._deferred.pop(j.job_id, None)
+
         for job in to_start:
             job.progress.status = DownloadStatus.QUEUED
             self._progress_tracker.update(job.job_id, job.progress)
@@ -381,17 +445,29 @@ class DownloadEngine:
 
     # ── Status & progress ────────────────────────────────────────────────────
 
-    def get_job(self, job_id: str) -> DownloadJob | None:
-        """Get a job by ID."""
+    def get_job(
+        self,
+        job_id: str,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+    ) -> DownloadJob | None:
+        """Get a job by ID with optional tenant/user ownership verification."""
         with self._jobs_lock:
-            return self._jobs.get(job_id)
+            job = self._jobs.get(job_id)
+            if not self._check_ownership(job, tenant_id, user_id):
+                return None
+            return job
 
     def get_job_progress(self, job_id: str) -> DownloadProgress | None:
         """Get current progress for a job."""
         return self._progress_tracker.get(job_id)
 
-    def get_all_jobs(self) -> List[DownloadJob]:
-        """Get all tracked jobs in display order: downloading, queued (queue order), deferred, then rest."""
+    def get_all_jobs(
+        self,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+    ) -> List[DownloadJob]:
+        """Get tracked jobs in display order, strictly filtered by tenant and optional user."""
         with self._jobs_lock:
             all_jobs = list(self._jobs.values())
         queue_ordered = self._queue.get_all_jobs()
@@ -401,6 +477,8 @@ class DownloadEngine:
         deferred: List[DownloadJob] = []
         rest: List[DownloadJob] = []
         for job in all_jobs:
+            if not self._check_ownership(job, tenant_id, user_id):
+                continue
             sid = job.progress.status
             if sid == DownloadStatus.DOWNLOADING:
                 downloading.append(job)
@@ -410,7 +488,8 @@ class DownloadEngine:
                 deferred.append(job)
             else:
                 rest.append(job)
-        return downloading + queue_list + deferred + rest
+        filtered_queue = [j for j in queue_list if self._check_ownership(j, tenant_id, user_id)]
+        return downloading + filtered_queue + deferred + rest
 
     def get_active_jobs(self) -> List[DownloadJob]:
         """Get currently downloading jobs."""
@@ -435,12 +514,30 @@ class DownloadEngine:
             "is_running": self._is_running,
         }
 
-    def move_job_up(self, job_id: str) -> bool:
+    def move_job_up(
+        self,
+        job_id: str,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+    ) -> bool:
         """Move a queued job one position up. Returns True if moved."""
+        with self._jobs_lock:
+            job = self._jobs.get(job_id)
+            if not self._check_ownership(job, tenant_id, user_id):
+                return False
         return self._queue.move_up(job_id)
 
-    def move_job_down(self, job_id: str) -> bool:
+    def move_job_down(
+        self,
+        job_id: str,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+    ) -> bool:
         """Move a queued job one position down. Returns True if moved."""
+        with self._jobs_lock:
+            job = self._jobs.get(job_id)
+            if not self._check_ownership(job, tenant_id, user_id):
+                return False
         return self._queue.move_down(job_id)
 
     @property

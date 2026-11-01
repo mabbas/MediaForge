@@ -28,10 +28,10 @@ async def get_history(
     query = select(DownloadJobDB)
     count_query = select(func.count(DownloadJobDB.id))
 
-    if tenant_id and tenant_id != "default":
+    if tenant_id is not None:
         query = query.where(DownloadJobDB.tenant_id == tenant_id)
         count_query = count_query.where(DownloadJobDB.tenant_id == tenant_id)
-    if user_id and user_id != "system":
+    if user_id is not None:
         query = query.where(DownloadJobDB.user_id == user_id)
         count_query = count_query.where(DownloadJobDB.user_id == user_id)
     if status:
@@ -78,9 +78,9 @@ async def get_history_stats(
 ) -> dict:
     """Get aggregated download history stats."""
     total_q = select(func.count(DownloadJobDB.id))
-    if tenant_id and tenant_id != "default":
+    if tenant_id is not None:
         total_q = total_q.where(DownloadJobDB.tenant_id == tenant_id)
-    if user_id and user_id != "system":
+    if user_id is not None:
         total_q = total_q.where(DownloadJobDB.user_id == user_id)
     total_result = await session.execute(total_q)
     total = total_result.scalar() or 0
@@ -90,9 +90,9 @@ async def get_history_stats(
             DownloadJobDB.status
         )
     )
-    if tenant_id and tenant_id != "default":
+    if tenant_id is not None:
         status_q = status_q.where(DownloadJobDB.tenant_id == tenant_id)
-    if user_id and user_id != "system":
+    if user_id is not None:
         status_q = status_q.where(DownloadJobDB.user_id == user_id)
     status_result = await session.execute(status_q)
     by_status = dict(status_result.all())
@@ -103,9 +103,9 @@ async def get_history_stats(
         .where(DownloadJobDB.provider != "")
         .group_by(DownloadJobDB.provider)
     )
-    if tenant_id and tenant_id != "default":
+    if tenant_id is not None:
         provider_q = provider_q.where(DownloadJobDB.tenant_id == tenant_id)
-    if user_id and user_id != "system":
+    if user_id is not None:
         provider_q = provider_q.where(DownloadJobDB.user_id == user_id)
     provider_result = await session.execute(provider_q)
     by_provider = dict(provider_result.all())
@@ -115,9 +115,9 @@ async def get_history_stats(
             DownloadJobDB.media_type
         )
     )
-    if tenant_id and tenant_id != "default":
+    if tenant_id is not None:
         type_q = type_q.where(DownloadJobDB.tenant_id == tenant_id)
-    if user_id and user_id != "system":
+    if user_id is not None:
         type_q = type_q.where(DownloadJobDB.user_id == user_id)
     type_result = await session.execute(type_q)
     by_type = dict(type_result.all())
@@ -125,9 +125,9 @@ async def get_history_stats(
     bytes_q = select(
         func.coalesce(func.sum(DownloadJobDB.file_size_bytes), 0)
     )
-    if tenant_id and tenant_id != "default":
+    if tenant_id is not None:
         bytes_q = bytes_q.where(DownloadJobDB.tenant_id == tenant_id)
-    if user_id and user_id != "system":
+    if user_id is not None:
         bytes_q = bytes_q.where(DownloadJobDB.user_id == user_id)
     bytes_result = await session.execute(bytes_q)
     total_bytes = bytes_result.scalar() or 0
@@ -135,9 +135,9 @@ async def get_history_stats(
     avg_q = select(
         func.coalesce(func.avg(DownloadJobDB.file_size_bytes), 0)
     ).where(DownloadJobDB.file_size_bytes.isnot(None))
-    if tenant_id and tenant_id != "default":
+    if tenant_id is not None:
         avg_q = avg_q.where(DownloadJobDB.tenant_id == tenant_id)
-    if user_id and user_id != "system":
+    if user_id is not None:
         avg_q = avg_q.where(DownloadJobDB.user_id == user_id)
     avg_result = await session.execute(avg_q)
     avg_bytes = int(avg_result.scalar() or 0)
@@ -153,9 +153,9 @@ async def get_history_stats(
         .order_by(func.count(DownloadJobDB.id).desc())
         .limit(1)
     )
-    if tenant_id and tenant_id != "default":
+    if tenant_id is not None:
         quality_q = quality_q.where(DownloadJobDB.tenant_id == tenant_id)
-    if user_id and user_id != "system":
+    if user_id is not None:
         quality_q = quality_q.where(DownloadJobDB.user_id == user_id)
     quality_result = await session.execute(quality_q)
     quality_row = quality_result.first()
@@ -198,9 +198,9 @@ async def clear_history(
             DownloadJobDB.status.in_(terminal)
         )
 
-    if tenant_id and tenant_id != "default":
+    if tenant_id is not None:
         query = query.where(DownloadJobDB.tenant_id == tenant_id)
-    if user_id and user_id != "system":
+    if user_id is not None:
         query = query.where(DownloadJobDB.user_id == user_id)
 
     result = await session.execute(query)

@@ -48,7 +48,7 @@ def client(tmp_path):
 
     from api.main import app
     from api.database.connection import get_session
-    from api.dependencies import get_app
+    from api.dependencies import CurrentUser, get_app, get_current_user
 
     async def _mock_session() -> AsyncGenerator[AsyncSession, None]:
         session = MagicMock(spec=AsyncSession)
@@ -67,12 +67,16 @@ def client(tmp_path):
 
     app.dependency_overrides[get_session] = _mock_session
     app.dependency_overrides[get_app] = lambda: mock_app
+    app.dependency_overrides[get_current_user] = lambda: CurrentUser(
+        user_id="test-user", tenant_id="test-tenant", role="owner", tier="platinum"
+    )
     try:
         with TestClient(app) as c:
             yield c, mock_app
     finally:
         app.dependency_overrides.pop(get_session, None)
         app.dependency_overrides.pop(get_app, None)
+        app.dependency_overrides.pop(get_current_user, None)
 
 
 def test_resume_help(client):

@@ -8,6 +8,8 @@ persistent storage.
 
 from __future__ import annotations
 
+from typing import Any
+
 import asyncio
 import logging
 import threading
@@ -43,6 +45,11 @@ class EngineDatabaseSync:
         self._last_update: dict[str, float] = {}
         self._pending: list[Future[None]] = []
         self._pending_lock = threading.Lock()
+        self._engine: Any = None
+
+    def set_engine(self, engine: Any) -> None:
+        """Inject engine instance to eliminate circular imports with dependencies.py."""
+        self._engine = engine
 
     def set_main_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         """Set the main app event loop so DB updates run there (avoids 'different loop' errors)."""
@@ -120,9 +127,14 @@ class EngineDatabaseSync:
     def _job_result_fields(self, job_id: str) -> dict:
         """Read final result metadata from the in-memory engine (terminal states)."""
         try:
-            from api.dependencies import get_app
-
-            job = get_app()._engine.get_job(job_id)
+            engine = self._engine
+            if engine is None:
+                try:
+                    from api.dependencies import get_app
+                    engine = get_app()._engine
+                except Exception:
+                    return {}
+            job = engine.get_job(job_id)
             if not job or not job.result:
                 return {}
             result = job.result
@@ -169,6 +181,76 @@ class EngineDatabaseSync:
                     total_bytes=progress.total_bytes,
                     **result_fields,
                 )
+                # Atomic commercial download usage recording upon completion (STEP 02-E2B-Fix-A)
+                if progress.status == DownloadStatus.COMPLETED:
+                    try:
+                        from api.database.models import DownloadJobDB, CommercialReservationDB
+                        from api.services.usage_service import record_usage_event
+                        from api.security.media_storage import get_tenant_storage_root
+
+                        job_record = await session.get(DownloadJobDB, job_id)
+                        if job_record and job_record.tenant_id:
+                            fsize = result_fields.get("file_size_bytes") or progress.total_bytes or progress.bytes_downloaded or 0
+                            # Cross-verify actual completed bytes directly from disk if file exists
+                            if job_record.file_path:
+                                try:
+                                    disk_file = get_tenant_storage_root(job_record.tenant_id) / job_record.file_path
+                                    if disk_file.is_file():
+                                        fsize = disk_file.stat().st_size
+                                except Exception:
+                                    pass
+
+                            await record_usage_event(
+                                session,
+                                tenant_id=job_record.tenant_id,
+                                event_type="download",
+                                idempotency_key=f"download:{job_id}",
+                                resource_id=job_id,
+                                quantity=1.0,
+                                unit="count",
+                                bytes=int(fsize),
+                                duration_seconds=float(job_record.duration_seconds or 0.0),
+                                user_id=job_record.user_id,
+                                auth_method="session",
+                                metadata_json={
+                                    "url": job_record.url,
+                                    "format": job_record.format,
+                                    "quality": job_record.quality,
+                                },
+                            )
+
+                            # Finalize commercial reservation (STEP 04-A2)
+                            from sqlalchemy import select
+                            stmt_res = select(CommercialReservationDB).where(
+                                CommercialReservationDB.resource_id == job_id,
+                                CommercialReservationDB.status.in_(["reserved", "active"]),
+                            ).with_for_update()
+                            res_obj = (await session.execute(stmt_res)).scalars().first()
+                            if res_obj:
+                                now_dt = datetime.utcnow()
+                                res_obj.status = "finalized"
+                                res_obj.finalized_at = now_dt
+                                res_obj.updated_at = now_dt
+                    except Exception as u_exc:
+                        logger.warning("Could not record in-transaction download usage for %s: %s", job_id, u_exc)
+
+                elif progress.status in (DownloadStatus.FAILED, DownloadStatus.CANCELLED):
+                    try:
+                        from api.database.models import CommercialReservationDB
+                        from sqlalchemy import select
+                        stmt_res = select(CommercialReservationDB).where(
+                            CommercialReservationDB.resource_id == job_id,
+                            CommercialReservationDB.status.in_(["reserved", "active"]),
+                        ).with_for_update()
+                        res_obj = (await session.execute(stmt_res)).scalars().first()
+                        if res_obj:
+                            now_dt = datetime.utcnow()
+                            res_obj.status = "released"
+                            res_obj.released_at = now_dt
+                            res_obj.updated_at = now_dt
+                    except Exception as r_exc:
+                        logger.warning("Could not release commercial reservation for download %s: %s", job_id, r_exc)
+
                 await session.commit()
 
         except Exception as e:

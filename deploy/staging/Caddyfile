@@ -1,0 +1,94 @@
+# ==============================================================================
+# MediaForge — Private Staging Reverse Proxy (Caddy 2)
+# Hardened for Tailscale Authenticated VPN / Private Access Only
+# Strictly restricts socket remote IP to tailnet and loopback CIDRs.
+# ==============================================================================
+
+{
+    admin off
+}
+
+{$STAGING_DOMAIN:staging.mediaforge.local}, localhost, 127.0.0.1 {
+    tls internal
+
+    # Network Access Control: Tailscale CGNAT range (100.64.0.0/10) + Loopback
+    # Does NOT trust arbitrary X-Forwarded-For headers; evaluates socket peer IP.
+    @blocked not remote_ip {$ALLOWED_CIDRS:127.0.0.1/32 ::1 100.64.0.0/10}
+    respond @blocked "Access Denied: Private Staging Access Restricted to Authenticated VPN." 403
+
+    # Security Headers (HSTS adjusted for staging/private hostname without preload)
+    header {
+        Strict-Transport-Security "max-age=86400; includeSubDomains"
+        X-Frame-Options "DENY"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none';"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        -Server
+    }
+
+    # Direct Backend API route
+    handle /api/v1/* {
+        reverse_proxy api:8000 {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+            trusted_proxies 127.0.0.1/32 ::1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10
+        }
+    }
+
+    # Web Management Portal (Next.js BFF and UI)
+    handle {
+        reverse_proxy web:3000 {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+            trusted_proxies 127.0.0.1/32 ::1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10
+        }
+    }
+
+    log {
+        output stdout
+        format json
+        level INFO
+    }
+}
+
+# ==============================================================================
+# MediaForge — Dedicated Loopback HTTP Listener for Tailscale Serve Upstream
+# Bound strictly to 127.0.0.1:8089 on host.
+# Eliminates HTTP 308 redirect loops by serving plain HTTP on internal loopback.
+# ==============================================================================
+
+http://:8089 {
+    # Network Access Control: Strictly local loopback & private subnets
+    @blocked not remote_ip 127.0.0.1/32 ::1 100.64.0.0/10 172.16.0.0/12 192.168.0.0/16 10.0.0.0/8
+    respond @blocked "Access Denied: Private Staging Access Restricted to Internal Networks." 403
+
+    # Security Headers for upstream proxy (omits HSTS so upstream does not force HTTPS on loopback)
+    header {
+        X-Frame-Options "DENY"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        -Server
+    }
+
+    # Direct Backend API route
+    handle /api/v1/* {
+        reverse_proxy api:8000 {
+            trusted_proxies 127.0.0.1/32 ::1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10
+        }
+    }
+
+    # Web Management Portal (Next.js BFF and UI)
+    handle {
+        reverse_proxy web:3000 {
+            trusted_proxies 127.0.0.1/32 ::1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10
+        }
+    }
+
+    log {
+        output stdout
+        format json
+        level INFO
+    }
+}

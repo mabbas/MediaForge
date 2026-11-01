@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database.connection import get_session
-from api.dependencies import CurrentUser, get_current_user
+from api.dependencies import CurrentUser, get_current_user, require_scope
 from api.schemas.history import (
     ClearHistoryResponse,
     HistoryEntrySchema,
@@ -45,13 +45,14 @@ async def list_history(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     session: AsyncSession = Depends(get_session),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(require_scope("downloads:read")),
 ):
     """Get download history."""
+    scoped_user_id = user.user_id if user.role == "member" else None
     jobs, total = await get_history(
         session,
         tenant_id=user.tenant_id,
-        user_id=user.user_id,
+        user_id=scoped_user_id,
         status=status,
         media_type=media_type,
         provider=provider,
@@ -97,13 +98,14 @@ async def list_history(
 )
 async def history_stats(
     session: AsyncSession = Depends(get_session),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(require_scope("downloads:read")),
 ):
     """Get download history statistics."""
+    scoped_user_id = user.user_id if user.role == "member" else None
     stats = await get_history_stats(
         session,
         tenant_id=user.tenant_id,
-        user_id=user.user_id,
+        user_id=scoped_user_id,
     )
     return HistoryStatsResponse(**stats)
 
@@ -121,13 +123,14 @@ async def delete_history(
         description="Only delete this status (completed/failed/cancelled)",
     ),
     session: AsyncSession = Depends(get_session),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(require_scope("downloads:write")),
 ):
     """Clear download history."""
+    scoped_user_id = user.user_id if user.role == "member" else None
     count = await clear_history(
         session,
         tenant_id=user.tenant_id,
-        user_id=user.user_id,
+        user_id=scoped_user_id,
         status=status,
     )
     label = f"{status} " if status else ""

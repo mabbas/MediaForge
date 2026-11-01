@@ -10,14 +10,40 @@ from __future__ import annotations
 import json
 import logging
 import os
+import signal
 import subprocess
 import tempfile
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+def _terminate_process_group(proc: subprocess.Popen) -> None:
+    """Terminate process group gracefully with SIGTERM, then escalate to SIGKILL."""
+    if proc.poll() is not None:
+        return
+    try:
+        if os.name != "nt" and hasattr(os, "killpg"):
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        else:
+            proc.terminate()
+    except (OSError, ProcessLookupError):
+        pass
+
+    try:
+        proc.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        try:
+            if os.name != "nt" and hasattr(os, "killpg"):
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            else:
+                proc.kill()
+        except (OSError, ProcessLookupError):
+            pass
 
 
 @dataclass
@@ -35,6 +61,8 @@ class MergeRequest:
     resolution: str | None = None
     transition: str | None = None  # Future: fade, etc.
     merge_id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
+    is_cancelled: Any = None
+    on_proc_started: Any = None
 
 
 @dataclass
@@ -132,6 +160,11 @@ class ClipMerger:
             result.success = False
             result.error = str(e)
             logger.error("Merge failed: %s", e)
+            if output_path and os.path.exists(output_path):
+                try:
+                    os.remove(output_path)
+                except OSError:
+                    pass
 
         return result
 
@@ -143,6 +176,10 @@ class ClipMerger:
             raise ValueError("Maximum 20 clips can be merged at once")
 
         for i, clip in enumerate(clips):
+            if not clip or not isinstance(clip, str):
+                raise ValueError(f"Clip {i + 1} reference is invalid or empty")
+            if "\n" in clip or "\r" in clip or "\0" in clip:
+                raise ValueError(f"Clip {i + 1} contains prohibited control characters or newlines")
             if not os.path.exists(clip):
                 raise FileNotFoundError(f"Clip {i + 1} not found: {clip}")
             if os.path.getsize(clip) == 0:
@@ -183,6 +220,8 @@ class ClipMerger:
         """Get video stream info using ffprobe."""
         cmd = [
             self._ffprobe,
+            "-protocol_whitelist",
+            "file,crypto,data",
             "-v",
             "quiet",
             "-select_streams",
@@ -221,9 +260,11 @@ class ClipMerger:
     ) -> None:
         """Merge using concat demuxer (fast, no re-encode)."""
         with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False
+            mode="w", suffix=".txt", delete=False, encoding="utf-8"
         ) as f:
             for clip in clips:
+                if "\n" in clip or "\r" in clip or "\0" in clip:
+                    raise ValueError(f"Prohibited newline or control character in clip path: {clip!r}")
                 safe_path = clip.replace("'", "'\\''")
                 f.write(f"file '{safe_path}'\n")
             concat_file = f.name
@@ -232,6 +273,9 @@ class ClipMerger:
             cmd = [
                 self._ffmpeg,
                 "-y",
+                "-nostdin",
+                "-protocol_whitelist",
+                "file,crypto,data,concat",
                 "-f",
                 "concat",
                 "-safe",
@@ -244,12 +288,36 @@ class ClipMerger:
             ]
 
             logger.debug("Concat cmd: %s", " ".join(cmd))
-            proc = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=600
+            start_new_session = (os.name != "nt")
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                start_new_session=start_new_session,
             )
 
+            if callable(getattr(request, "on_proc_started", None)):
+                try:
+                    request.on_proc_started(proc)
+                except Exception:
+                    pass
+
+            start_t = time.time()
+            is_cancelled_fn = getattr(request, "is_cancelled", None)
+
+            while proc.poll() is None:
+                if callable(is_cancelled_fn) and is_cancelled_fn():
+                    _terminate_process_group(proc)
+                    raise RuntimeError("Cancelled by user")
+                if time.time() - start_t > 600:
+                    _terminate_process_group(proc)
+                    raise RuntimeError("FFmpeg concat timed out after 600s")
+                time.sleep(0.2)
+
+            stdout_res, stderr_res = proc.communicate()
             if proc.returncode != 0:
-                err_tail = (proc.stderr or "")[-500:]
+                err_tail = (stderr_res or "")[-500:]
                 raise RuntimeError(f"FFmpeg concat failed: {err_tail}")
         finally:
             try:
@@ -264,10 +332,17 @@ class ClipMerger:
         request: MergeRequest,
     ) -> None:
         """Merge using filter_complex (re-encode)."""
-        cmd = [self._ffmpeg, "-y"]
+        cmd = [
+            self._ffmpeg,
+            "-y",
+            "-nostdin",
+            "-protocol_whitelist",
+            "file,crypto,data",
+        ]
 
         for clip in clips:
             cmd.extend(["-i", clip])
+
 
         n = len(clips)
         if request.resolution:
@@ -288,10 +363,9 @@ class ClipMerger:
                 f"channel_layouts=stereo[a{i}]"
             )
 
-        v_inputs = "".join(f"[v{i}]" for i in range(n))
-        a_inputs = "".join(f"[a{i}]" for i in range(n))
+        concat_inputs = "".join(f"[v{i}][a{i}]" for i in range(n))
         filter_parts.append(
-            f"{v_inputs}{a_inputs}concat=n={n}:v=1:a=1[outv][outa]"
+            f"{concat_inputs}concat=n={n}:v=1:a=1[outv][outa]"
         )
 
         filter_str = ";".join(filter_parts)
@@ -319,18 +393,44 @@ class ClipMerger:
         cmd.append(output)
 
         logger.debug("Reencode cmd: %s", " ".join(cmd))
-        proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=1800
+        start_new_session = (os.name != "nt")
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=start_new_session,
         )
 
+        if callable(getattr(request, "on_proc_started", None)):
+            try:
+                request.on_proc_started(proc)
+            except Exception:
+                pass
+
+        start_t = time.time()
+        is_cancelled_fn = getattr(request, "is_cancelled", None)
+
+        while proc.poll() is None:
+            if callable(is_cancelled_fn) and is_cancelled_fn():
+                _terminate_process_group(proc)
+                raise RuntimeError("Cancelled by user")
+            if time.time() - start_t > 1800:
+                _terminate_process_group(proc)
+                raise RuntimeError("FFmpeg reencode timed out after 1800s")
+            time.sleep(0.2)
+
+        stdout_res, stderr_res = proc.communicate()
         if proc.returncode != 0:
-            err_tail = (proc.stderr or "")[-500:]
+            err_tail = (stderr_res or "")[-500:]
             raise RuntimeError(f"FFmpeg reencode failed: {err_tail}")
 
     def _get_duration(self, file_path: str) -> float:
         try:
             cmd = [
                 self._ffprobe,
+                "-protocol_whitelist",
+                "file,crypto,data",
                 "-v",
                 "quiet",
                 "-show_entries",

@@ -23,17 +23,17 @@ def _project_root() -> Path:
 
 
 def load_project_dotenv() -> bool:
-    """Load .env from project root. Returns True if a file was loaded."""
+    """Load .env from project root or deploy/.env. Returns True if a file was loaded."""
     root = _project_root()
-    env_file = root / ".env"
-    if not env_file.is_file():
-        return False
-    try:
-        from dotenv import load_dotenv
-        load_dotenv(env_file)
-        return True
-    except ImportError:
-        return False
+    for candidate in (root / ".env", root / "deploy" / ".env"):
+        if candidate.is_file():
+            try:
+                from dotenv import load_dotenv
+                load_dotenv(candidate)
+                return True
+            except ImportError:
+                return False
+    return False
 
 
 def _ffmpeg_exe_names() -> tuple[str, str]:

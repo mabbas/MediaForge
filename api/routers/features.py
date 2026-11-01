@@ -18,7 +18,7 @@ from src.features.feature_flags import load_feature_flags
 from src.features.feature_gate import FeatureGate
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/features", tags=["Features"])
+router = APIRouter(prefix="/features", tags=["Features"], dependencies=[Depends(get_current_user)])
 
 
 @router.get(

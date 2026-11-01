@@ -105,6 +105,7 @@ class GrabItDown:
         quality: str = "1080p",
         output_dir: Optional[str] = None,
         user_id: str = "system",
+        tenant_id: str = "default",
         tier: Optional[str] = None,
         priority: str = "normal",
         start: bool = True,
@@ -138,6 +139,7 @@ class GrabItDown:
             request=request,
             priority=priority,
             user_id=user_id,
+            tenant_id=tenant_id,
             start=start,
         )
 
@@ -150,6 +152,7 @@ class GrabItDown:
         items: str | List[int] = "all",
         concurrency: int = 3,
         user_id: str = "system",
+        tenant_id: str = "default",
         tier: Optional[str] = None,
         priority: str = "normal",
         start: bool = True,
@@ -176,6 +179,7 @@ class GrabItDown:
             request=playlist_request,
             priority=priority,
             user_id=user_id,
+            tenant_id=tenant_id,
             start=start,
         )
         return jobs
@@ -187,6 +191,7 @@ class GrabItDown:
         quality: str = "1080p",
         output_dir: Optional[str] = None,
         user_id: str = "system",
+        tenant_id: str = "default",
         tier: Optional[str] = None,
         priority: str = "normal",
         start: bool = True,
@@ -214,26 +219,41 @@ class GrabItDown:
             requests=requests,
             priority=priority,
             user_id=user_id,
+            tenant_id=tenant_id,
             start=start,
         )
 
     # ── Status & Control ────────────────────────────────────────────────────
 
-    def get_job(self, job_id: str) -> Optional[DownloadJob]:
-        """Get job status."""
-        return self._engine.get_job(job_id)
+    def get_job(
+        self,
+        job_id: str,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+    ) -> Optional[DownloadJob]:
+        """Get job status with tenant/user ownership verification."""
+        return self._engine.get_job(job_id, tenant_id=tenant_id, user_id=user_id)
 
-    def get_all_jobs(self) -> List[DownloadJob]:
-        """Get all jobs."""
-        return self._engine.get_all_jobs()
+    def get_all_jobs(
+        self,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+    ) -> List[DownloadJob]:
+        """Get all jobs strictly filtered by tenant and optional user."""
+        return self._engine.get_all_jobs(tenant_id=tenant_id, user_id=user_id)
 
     def get_stats(self) -> dict:
         """Get engine statistics."""
         return self._engine.get_stats()
 
-    def cancel(self, job_id: str) -> bool:
-        """Cancel a download."""
-        return self._engine.cancel_job(job_id)
+    def cancel(
+        self,
+        job_id: str,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+    ) -> bool:
+        """Cancel a download with tenant/user ownership check."""
+        return self._engine.cancel_job(job_id, tenant_id=tenant_id, user_id=user_id)
 
     def cancel_all(self) -> int:
         """Cancel all downloads."""
@@ -247,29 +267,58 @@ class GrabItDown:
         """Resume download engine."""
         self._engine.resume_all()
 
-    def start_download_job(self, job_id: str) -> bool:
+    def start_download_job(
+        self,
+        job_id: str,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+    ) -> bool:
         """Start a deferred download job. Returns True if the job was deferred and is now queued."""
-        return self._engine.start_job(job_id)
+        return self._engine.start_job(job_id, tenant_id=tenant_id, user_id=user_id)
 
-    def start_all_deferred(self) -> int:
-        """Start all deferred download jobs. Returns the number of jobs started."""
-        return self._engine.start_all_deferred()
+    def start_all_deferred(
+        self,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+    ) -> int:
+        """Start all deferred download jobs for tenant/user. Returns the number of jobs started."""
+        return self._engine.start_all_deferred(tenant_id=tenant_id, user_id=user_id)
 
-    def pause_download_job(self, job_id: str) -> bool:
+    def pause_download_job(
+        self,
+        job_id: str,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+    ) -> bool:
         """Pause a single download (queued, deferred, or active). Job can be resumed later."""
-        return self._engine.pause_job(job_id)
+        return self._engine.pause_job(job_id, tenant_id=tenant_id, user_id=user_id)
 
-    def requeue_job(self, job_id: str) -> bool:
+    def requeue_job(
+        self,
+        job_id: str,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+    ) -> bool:
         """Re-queue a failed/paused/interrupted job (same job_id). Returns True if requeued."""
-        return self._engine.requeue_job(job_id)
+        return self._engine.requeue_job(job_id, tenant_id=tenant_id, user_id=user_id)
 
-    def move_job_up(self, job_id: str) -> bool:
+    def move_job_up(
+        self,
+        job_id: str,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+    ) -> bool:
         """Move a queued job one position up in the download list. Returns True if moved."""
-        return self._engine.move_job_up(job_id)
+        return self._engine.move_job_up(job_id, tenant_id=tenant_id, user_id=user_id)
 
-    def move_job_down(self, job_id: str) -> bool:
+    def move_job_down(
+        self,
+        job_id: str,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+    ) -> bool:
         """Move a queued job one position down in the download list. Returns True if moved."""
-        return self._engine.move_job_down(job_id)
+        return self._engine.move_job_down(job_id, tenant_id=tenant_id, user_id=user_id)
 
     # ── Info APIs ───────────────────────────────────────────────────────────
 
